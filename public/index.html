@@ -21,6 +21,7 @@
 
       <section class="card controls">
         <h2>Parametri</h2>
+        <p>Filtro temporale attivo: solo partite future nei prossimi 7 giorni.</p>
         <div class="grid">
           <label>
             Budget totale (€)
@@ -31,8 +32,9 @@
             <input id="maxMatches" type="number" min="2" max="10" value="5" />
           </label>
           <label>
-            Soglia rischio (0-1)
-            <input id="risk" type="number" min="0.05" max="0.95" step="0.05" value="0.45" />
+            Profilo rischio
+            <input id="risk" type="range" min="5" max="95" step="5" value="45" />
+            <small id="riskLabel">45% · Bilanciato</small>
           </label>
         </div>
         <div class="actions">
@@ -43,12 +45,14 @@
 
       <section class="card">
         <h2>Partite estratte</h2>
+        <p id="matchesMeta"></p>
         <div id="matches" class="list"></div>
       </section>
 
       <section class="card">
         <h2>Sistema consigliato</h2>
         <div id="summary"></div>
+        <div id="strategy"></div>
         <div id="tickets" class="list"></div>
         <div id="notes"></div>
       </section>

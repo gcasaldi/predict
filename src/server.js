@@ -8,6 +8,10 @@ const port = Number(process.env.PORT || 3000);
 const sourceUrl =
   process.env.SOURCE_URL ||
   "https://www.mondopengwin.it/pronostici/calcio/serie-a/";
+const sofaBaseUrl =
+  process.env.SOFASCORE_BASE_URL ||
+  "https://www.sofascore.com/api/v1";
+const unifiedCache = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -78,8 +82,140 @@ function extractMatch(text) {
   return null;
 }
 
+function extractMatchday(text) {
+  const match = text.match(/\bgiornata\s*(\d{1,2})\b/i);
+  if (!match) {
+    return null;
+  }
+  return `Giornata ${match[1]}`;
+}
+
+function extractKickoff(text) {
+  const match = text.match(/\b(\d{1,2})[:.](\d{2})\b/);
+  if (!match) {
+    return null;
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function slotFromKickoff(kickoff) {
+  if (!kickoff) {
+    return null;
+  }
+  const hour = Number(kickoff.split(":")[0]);
+  if (hour < 12) {
+    return "Mattina";
+  }
+  if (hour < 18) {
+    return "Pomeriggio";
+  }
+  if (hour < 22) {
+    return "Sera";
+  }
+  return "Notte";
+}
+
+function toStartOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function parseDateFromText(text, referenceDate = new Date()) {
+  const match = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\b/);
+  if (!match) {
+    return null;
+  }
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || day < 1 || day > 31 || month < 1 || month > 12) {
+    return null;
+  }
+
+  let year;
+  if (match[3]) {
+    const rawYear = Number(match[3]);
+    if (!Number.isFinite(rawYear)) {
+      return null;
+    }
+    year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  } else {
+    year = referenceDate.getFullYear();
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function toIsoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function withDateWindow(matches, days = 7, referenceDate = new Date()) {
+  const today = toStartOfDay(referenceDate);
+  const end = new Date(today);
+  end.setDate(end.getDate() + Math.max(1, days));
+
+  const inWindow = matches.filter((item) => {
+    if (!item.matchDate) {
+      return false;
+    }
+    const eventDate = toStartOfDay(new Date(item.matchDate));
+    return eventDate >= today && eventDate <= end;
+  });
+
+  if (inWindow.length) {
+    return inWindow;
+  }
+
+  return matches;
+}
+
+function toKickoffFromDate(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function parseInputNumber(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.replace(",", ".").trim();
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return fallback;
 }
 
 function confidenceFromOdd(odd) {
@@ -111,7 +247,7 @@ function oddForPick(baseOdd, isBackup) {
     return isBackup ? 1.38 : 1.68;
   }
   if (isBackup) {
-    return clamp(baseOdd * 0.78, 1.2, 10);
+    return clamp(baseOdd * 0.9, 1.2, 10);
   }
   return baseOdd;
 }
@@ -141,20 +277,619 @@ function scoreTicket(events) {
   );
 }
 
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTeamForm(form) {
+  if (!form) {
+    return {
+      pointsPerGame: 1,
+      goalsForPerGame: 1,
+      goalsAgainstPerGame: 1,
+      sampleSize: 0
+    };
+  }
+  return form;
+}
+
+function estimateOddFromConfidence(confidence, market) {
+  const marginByMarket = {
+    "1X": 1.04,
+    X2: 1.04,
+    "OVER 1.5": 1.05,
+    "UNDER 3.5": 1.05,
+    "HOME OVER 0.5": 1.05,
+    "AWAY OVER 0.5": 1.05,
+    "MULTIGOAL 1-3": 1.07,
+    "MULTIGOAL 2-4": 1.07,
+    GG: 1.08,
+    NG: 1.08,
+    "UNDER 2.5": 1.09,
+    "OVER 2.5": 1.09,
+    "1": 1.1,
+    "2": 1.1
+  };
+  const margin = marginByMarket[market] || 1.08;
+  return clamp((1 / confidence) * margin, 1.2, 4.2);
+}
+
+function buildFormStatsFromEvents(events, teamId) {
+  const relevant = (events || []).filter((event) => {
+    const statusType = event?.status?.type;
+    const isFinished = statusType === "finished" || statusType === "after_penalties";
+    const homeId = event?.homeTeam?.id;
+    const awayId = event?.awayTeam?.id;
+    return isFinished && (homeId === teamId || awayId === teamId);
+  });
+
+  if (!relevant.length) {
+    return normalizeTeamForm(null);
+  }
+
+  const aggregate = relevant.reduce(
+    (acc, event) => {
+      const isHome = event.homeTeam.id === teamId;
+      const goalsFor = isHome
+        ? Number(event?.homeScore?.current ?? 0)
+        : Number(event?.awayScore?.current ?? 0);
+      const goalsAgainst = isHome
+        ? Number(event?.awayScore?.current ?? 0)
+        : Number(event?.homeScore?.current ?? 0);
+
+      let points = 0;
+      if (goalsFor > goalsAgainst) {
+        points = 3;
+      } else if (goalsFor === goalsAgainst) {
+        points = 1;
+      }
+
+      acc.points += points;
+      acc.goalsFor += goalsFor;
+      acc.goalsAgainst += goalsAgainst;
+      acc.count += 1;
+      return acc;
+    },
+    { points: 0, goalsFor: 0, goalsAgainst: 0, count: 0 }
+  );
+
+  if (!aggregate.count) {
+    return normalizeTeamForm(null);
+  }
+
+  return {
+    pointsPerGame: aggregate.points / aggregate.count,
+    goalsForPerGame: aggregate.goalsFor / aggregate.count,
+    goalsAgainstPerGame: aggregate.goalsAgainst / aggregate.count,
+    sampleSize: aggregate.count
+  };
+}
+
+function buildMarketCandidates(homeForm, awayForm) {
+  const home = normalizeTeamForm(homeForm);
+  const away = normalizeTeamForm(awayForm);
+
+  const expectedHomeGoals = clamp(
+    (home.goalsForPerGame + away.goalsAgainstPerGame) / 2,
+    0.2,
+    3.2
+  );
+  const expectedAwayGoals = clamp(
+    (away.goalsForPerGame + home.goalsAgainstPerGame) / 2,
+    0.2,
+    3.2
+  );
+  const expectedTotalGoals = expectedHomeGoals + expectedAwayGoals;
+  const ppgDiff = home.pointsPerGame - away.pointsPerGame;
+
+  const candidates = [
+    {
+      market: "1X",
+      confidence: clamp(0.58 + ppgDiff * 0.11, 0.42, 0.87),
+      rationale: `Forma relativa casa favorevole (${home.pointsPerGame.toFixed(2)} vs ${away.pointsPerGame.toFixed(2)} PPG).`
+    },
+    {
+      market: "X2",
+      confidence: clamp(0.58 - ppgDiff * 0.11, 0.42, 0.87),
+      rationale: `Forma relativa ospite favorevole (${away.pointsPerGame.toFixed(2)} vs ${home.pointsPerGame.toFixed(2)} PPG).`
+    },
+    {
+      market: "1",
+      confidence: clamp(0.42 + ppgDiff * 0.18, 0.2, 0.8),
+      rationale: "Esito secco casa in base a differenza PPG."
+    },
+    {
+      market: "2",
+      confidence: clamp(0.42 - ppgDiff * 0.18, 0.2, 0.8),
+      rationale: "Esito secco ospite in base a differenza PPG."
+    },
+    {
+      market: "OVER 1.5",
+      confidence: clamp(0.55 + (expectedTotalGoals - 1.5) * 0.14, 0.35, 0.86),
+      rationale: `Totale gol atteso ${expectedTotalGoals.toFixed(2)}.`
+    },
+    {
+      market: "UNDER 3.5",
+      confidence: clamp(0.66 - Math.max(0, expectedTotalGoals - 2.7) * 0.16, 0.34, 0.83),
+      rationale: `Partita con varianza gol contenuta (totale atteso ${expectedTotalGoals.toFixed(2)}).`
+    },
+    {
+      market: "OVER 2.5",
+      confidence: clamp(0.41 + (expectedTotalGoals - 2.5) * 0.2, 0.2, 0.79),
+      rationale: "Spinta offensiva aggregata sopra soglia 2.5."
+    },
+    {
+      market: "UNDER 2.5",
+      confidence: clamp(0.56 - (expectedTotalGoals - 2.2) * 0.18, 0.24, 0.82),
+      rationale: "Partita attesa tattica e con ritmo basso."
+    },
+    {
+      market: "GG",
+      confidence: clamp(0.4 + Math.min(expectedHomeGoals, expectedAwayGoals) * 0.19, 0.24, 0.79),
+      rationale: `Entrambe le squadre con attacco atteso >0.8 (${expectedHomeGoals.toFixed(2)} / ${expectedAwayGoals.toFixed(2)}).`
+    },
+    {
+      market: "NG",
+      confidence: clamp(0.54 - Math.min(expectedHomeGoals, expectedAwayGoals) * 0.16, 0.22, 0.8),
+      rationale: "Possibile clean sheet da almeno una parte."
+    },
+    {
+      market: "MULTIGOAL 1-3",
+      confidence: clamp(0.62 - Math.abs(expectedTotalGoals - 2.4) * 0.13, 0.28, 0.82),
+      rationale: "Range gol stabile e prudente."
+    },
+    {
+      market: "MULTIGOAL 2-4",
+      confidence: clamp(0.6 - Math.abs(expectedTotalGoals - 3) * 0.12, 0.25, 0.8),
+      rationale: "Range gol centrale con copertura estesa."
+    },
+    {
+      market: "HOME OVER 0.5",
+      confidence: clamp(0.6 + (expectedHomeGoals - 0.8) * 0.15, 0.3, 0.86),
+      rationale: `Gol casa atteso ${expectedHomeGoals.toFixed(2)}.`
+    },
+    {
+      market: "AWAY OVER 0.5",
+      confidence: clamp(0.6 + (expectedAwayGoals - 0.8) * 0.15, 0.3, 0.86),
+      rationale: `Gol ospite atteso ${expectedAwayGoals.toFixed(2)}.`
+    }
+  ]
+    .map((item) => ({
+      ...item,
+      confidence: Number(item.confidence.toFixed(3)),
+      odd: Number(estimateOddFromConfidence(item.confidence, item.market).toFixed(2))
+    }))
+    .filter((item) => item.confidence >= 0.35)
+    .sort((a, b) => b.confidence - a.confidence);
+
+  return candidates;
+}
+
+async function fetchTeamForm(teamId, cache) {
+  if (!teamId) {
+    return normalizeTeamForm(null);
+  }
+
+  if (cache.has(teamId)) {
+    return cache.get(teamId);
+  }
+
+  const url = `${sofaBaseUrl}/team/${teamId}/events/last/5`;
+  const payload = await fetchJson(url);
+  const form = buildFormStatsFromEvents(payload?.events || [], teamId);
+  cache.set(teamId, form);
+  return form;
+}
+
+function chooseSafestMarket(candidates, risk) {
+  const safetyBias = {
+    "1X": 0.06,
+    X2: 0.06,
+    "OVER 1.5": 0.05,
+    "UNDER 3.5": 0.05,
+    "HOME OVER 0.5": 0.045,
+    "AWAY OVER 0.5": 0.045,
+    "MULTIGOAL 1-3": 0.04,
+    "MULTIGOAL 2-4": 0.035,
+    "UNDER 2.5": 0.02,
+    GG: 0.015,
+    NG: 0.015,
+    "OVER 2.5": 0.01,
+    "1": 0,
+    "2": 0
+  };
+
+  const items = candidates?.length
+    ? candidates
+    : [{ market: "1X", confidence: 0.55, odd: 1.7, rationale: "Fallback prudente." }];
+
+  return [...items]
+    .map((item) => {
+      const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
+      const valueWeight = clamp(risk, 0.05, 0.95) * 0.08;
+      const oddValue = clamp((item.odd - 1.25) / 2.8, 0, 0.2);
+      const score =
+        item.confidence +
+        conservativeWeight * (safetyBias[item.market] || 0.02) +
+        valueWeight * oddValue;
+      return {
+        ...item,
+        score: Number(score.toFixed(4))
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0];
+}
+
+function marketStabilityBias(market) {
+  const map = {
+    "1X": 0.12,
+    X2: 0.12,
+    "OVER 1.5": 0.1,
+    "UNDER 3.5": 0.1,
+    "HOME OVER 0.5": 0.09,
+    "AWAY OVER 0.5": 0.09,
+    "MULTIGOAL 1-3": 0.08,
+    "MULTIGOAL 2-4": 0.07,
+    "UNDER 2.5": 0.05,
+    GG: 0.04,
+    NG: 0.04,
+    "OVER 2.5": 0.03,
+    "1": 0,
+    "2": 0
+  };
+  return map[market] || 0.04;
+}
+
+function valueBiasFromOdd(odd) {
+  if (!odd || !Number.isFinite(odd)) {
+    return 0;
+  }
+  return clamp((odd - 1.35) / 2.8, 0, 0.25);
+}
+
+function matchSelectionScore(match, risk) {
+  const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
+  const valueWeight = clamp(risk, 0.05, 0.95);
+  const stability = marketStabilityBias(match.mainPick || match.pick);
+  const confidencePart = Number(match.confidence || 0.5);
+  const valuePart = valueBiasFromOdd(Number(match.odd || 1.7));
+  return Number(
+    (confidencePart + conservativeWeight * stability + valueWeight * valuePart).toFixed(4)
+  );
+}
+
+function applyRiskProfileToMatches(matches, risk) {
+  return matches.map((match) => {
+    const chosen = chooseSafestMarket(match.marketCandidates || [], risk);
+    if (!chosen) {
+      return {
+        ...match,
+        safetyScore: Number(match.confidence || 0.5),
+        selectionReason: match.selectionReason || "Fallback su mercato disponibile."
+      };
+    }
+
+    return {
+      ...match,
+      pick: chosen.market,
+      backupPick: backupPickFor(chosen.market),
+      odd: chosen.odd,
+      confidence: chosen.confidence,
+      safetyScore: chosen.score,
+      selectionReason: chosen.rationale
+    };
+  });
+}
+
+function rankMatchesForRisk(matches, risk, maxMatches) {
+  return [...matches]
+    .sort((a, b) => {
+      const scoreA = matchSelectionScore(a, risk);
+      const scoreB = matchSelectionScore(b, risk);
+      return scoreB - scoreA;
+    })
+    .slice(0, maxMatches);
+}
+
+async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
+  const today = toStartOfDay(referenceDate);
+  const formCache = new Map();
+  const events = [];
+
+  for (let offset = 0; offset <= days; offset += 1) {
+    const target = new Date(today);
+    target.setDate(today.getDate() + offset);
+    const dateToken = toIsoDate(target);
+    const url = `${sofaBaseUrl}/sport/football/scheduled-events/${dateToken}`;
+    const payload = await fetchJson(url);
+    if (!payload?.events?.length) {
+      continue;
+    }
+
+    const serieAEvents = payload.events.filter((event) => {
+      const tournamentName = event?.tournament?.uniqueTournament?.name || "";
+      const countryName = event?.tournament?.uniqueTournament?.category?.name || "";
+      return /serie a/i.test(tournamentName) && /(italy|italia)/i.test(countryName);
+    });
+
+    events.push(...serieAEvents);
+  }
+
+  const unique = new Map();
+  for (const event of events) {
+    const key = event?.id || event?.customId;
+    if (!key || unique.has(key)) {
+      continue;
+    }
+    unique.set(key, event);
+  }
+
+  const picks = [];
+  for (const event of unique.values()) {
+    const startTimestamp = event?.startTimestamp;
+    if (!startTimestamp) {
+      continue;
+    }
+
+    const eventDate = new Date(startTimestamp * 1000);
+    if (toStartOfDay(eventDate) < today) {
+      continue;
+    }
+
+    const homeTeamName = event?.homeTeam?.name;
+    const awayTeamName = event?.awayTeam?.name;
+    if (!homeTeamName || !awayTeamName) {
+      continue;
+    }
+
+    const homeTeamId = event?.homeTeam?.id;
+    const awayTeamId = event?.awayTeam?.id;
+    const [homeForm, awayForm] = await Promise.all([
+      fetchTeamForm(homeTeamId, formCache),
+      fetchTeamForm(awayTeamId, formCache)
+    ]);
+    const marketCandidates = buildMarketCandidates(homeForm, awayForm);
+    const predicted = chooseSafestMarket(marketCandidates, 0.1);
+
+    const kickoff = toKickoffFromDate(eventDate);
+    picks.push({
+      id: `sofa-${event.id}`,
+      match: `${homeTeamName} vs ${awayTeamName}`,
+      pick: predicted.market,
+      backupPick: backupPickFor(predicted.market),
+      odd: predicted.odd,
+      confidence: predicted.confidence,
+      selectionReason: predicted.rationale,
+      safetyScore: predicted.score,
+      marketCandidates: marketCandidates.slice(0, 5),
+      matchday: event?.roundInfo?.round
+        ? `Giornata ${event.roundInfo.round}`
+        : "Giornata ND",
+      kickoff,
+      kickoffSlot: slotFromKickoff(kickoff),
+      matchDate: toIsoDate(eventDate),
+      source: "sofascore",
+      raw: `Sofascore event ${event.id}`,
+      pastStats: {
+        homePpg: Number(homeForm.pointsPerGame.toFixed(2)),
+        awayPpg: Number(awayForm.pointsPerGame.toFixed(2)),
+        homeGF: Number(homeForm.goalsForPerGame.toFixed(2)),
+        awayGF: Number(awayForm.goalsForPerGame.toFixed(2))
+      }
+    });
+  }
+
+  return picks;
+}
+
+async function getUnifiedMatches(timeRangeDays = 7) {
+  const cacheKey = String(timeRangeDays);
+  const cached = unifiedCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 5 * 60 * 1000) {
+    return cached.payload;
+  }
+
+  const [sofaMatches, mondoMatches] = await Promise.all([
+    fetchSofascoreSerieA(timeRangeDays),
+    scrapeSerieAPicks(sourceUrl)
+  ]);
+
+  const sofaInWindow = withDateWindow(sofaMatches, timeRangeDays);
+  if (sofaInWindow.length >= 3) {
+    const payload = {
+      matches: sofaInWindow,
+      source: "sofascore"
+    };
+    unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
+    return payload;
+  }
+
+  const mondoInWindow = withDateWindow(mondoMatches, timeRangeDays);
+  const merged = new Map();
+
+  for (const match of [...sofaInWindow, ...mondoInWindow]) {
+    const key = normalizeWhitespace((match.match || "").toLowerCase());
+    if (!key || merged.has(key)) {
+      continue;
+    }
+    merged.set(key, match);
+  }
+
+  const finalMatches = [...merged.values()];
+  if (finalMatches.length) {
+    const payload = {
+      matches: finalMatches,
+      source: sofaInWindow.length ? "sofascore+mondopengwin" : "mondopengwin"
+    };
+    unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
+    return payload;
+  }
+
+  const payload = {
+    matches: getFallbackMatches(),
+    source: "fallback"
+  };
+  unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
+  return payload;
+}
+
+function chooseAlignedPool(items) {
+  const byMatchday = new Map();
+  for (const item of items) {
+    const key = item.matchday || "Giornata ND";
+    if (!byMatchday.has(key)) {
+      byMatchday.set(key, []);
+    }
+    byMatchday.get(key).push(item);
+  }
+
+  const dayEntries = [...byMatchday.entries()].sort((a, b) => b[1].length - a[1].length);
+  const [selectedMatchday, dayItems] = dayEntries[0] || ["Giornata ND", []];
+
+  const bySlot = new Map();
+  for (const item of dayItems) {
+    const key = item.kickoffSlot || "SLOT_ND";
+    if (!bySlot.has(key)) {
+      bySlot.set(key, []);
+    }
+    bySlot.get(key).push(item);
+  }
+
+  const slotEntries = [...bySlot.entries()].sort((a, b) => b[1].length - a[1].length);
+  const [selectedSlot, slotItems] = slotEntries[0] || ["SLOT_ND", dayItems];
+
+  const strictSlot = selectedSlot !== "SLOT_ND" && slotItems.length >= 3;
+  const pool = strictSlot ? slotItems : dayItems;
+
+  return {
+    pool,
+    selectedMatchday,
+    selectedSlot: strictSlot ? selectedSlot : null,
+    strictSlot
+  };
+}
+
+function normalizedEvent(match, useBackup = false) {
+  return {
+    match: match.match,
+    pick: useBackup ? match.backupPick : match.mainPick,
+    odd: useBackup ? oddForPick(match.odd, true) : oddForPick(match.odd, false),
+    confidence: useBackup
+      ? clamp(match.confidence + 0.1, 0.35, 0.94)
+      : match.confidence,
+    role: useBackup ? "hedge" : "main"
+  };
+}
+
+function buildCandidateTickets(coreMatches) {
+  const mainEvents = coreMatches.map((item) => normalizedEvent(item, false));
+  const pairEvents = combinations(mainEvents, 2);
+
+  const tickets = [];
+
+  for (let index = 0; index < pairEvents.length; index += 1) {
+    const events = pairEvents[index];
+    tickets.push({
+      type: `Sistema 2/3 #${index + 1}`,
+      events,
+      format: "2/3",
+      ...scoreTicket(events)
+    });
+  }
+
+  tickets.push({
+    type: "Sistema 3/3",
+    events: mainEvents,
+    format: "3/3",
+    ...scoreTicket(mainEvents)
+  });
+
+  for (let index = 0; index < coreMatches.length; index += 1) {
+    const hedgeEvents = coreMatches.map((item, innerIndex) =>
+      normalizedEvent(item, innerIndex === index)
+    );
+    tickets.push({
+      type: `Copertura distribuita ${coreMatches[index].match}`,
+      events: hedgeEvents,
+      format: "3/3-hedge",
+      ...scoreTicket(hedgeEvents)
+    });
+  }
+
+  return tickets.map((ticket) => ({
+    ...ticket,
+    evRatio: Number((ticket.probability * ticket.odd).toFixed(4))
+  }));
+}
+
+function buildHeuristicStrategy(selectedMatches, risk, summary) {
+  const profile =
+    risk <= 0.2
+      ? "Molto prudente"
+      : risk <= 0.4
+        ? "Prudente"
+        : risk <= 0.6
+          ? "Bilanciato"
+          : risk <= 0.8
+            ? "Spinto"
+            : "Aggressivo";
+
+  return {
+    profile,
+    criteria: [
+      "Per ogni match vengono confrontati mercati esito, over/under, multigoal e team-goal.",
+      "Il mercato finale è scelto con punteggio sicurezza (confidenza + bias prudenziale in base al rischio).",
+      "Con rischio basso il modello privilegia mercati stabili (1X/X2, over 1.5, under 3.5, multigoal).",
+      "Lo stake viene allocato solo su ticket con EV ratio >= 1; il resto resta in riserva prudente."
+    ],
+    matchDecisions: selectedMatches.map((item) => ({
+      match: item.match,
+      selectedMarket: item.mainPick,
+      confidence: Number(item.confidence.toFixed(3)),
+      safetyScore: Number((item.safetyScore || item.confidence).toFixed(3)),
+      reason: item.selectionReason || "Scelta del mercato con miglior stabilità stimata.",
+      alternatives: (item.marketCandidates || []).slice(0, 3).map((candidate) => ({
+        market: candidate.market,
+        confidence: candidate.confidence,
+        odd: candidate.odd
+      }))
+    })),
+    expectedEdge: summary.expectedEdge,
+    successProbability: summary.successProbability
+  };
+}
+
 function buildParachuteSystem(matches, options) {
-  const bankroll = Number(options.bankroll || 100);
-  const maxMatches = clamp(Number(options.maxMatches || 5), 2, 10);
-  const risk = clamp(Number(options.risk || 0.45), 0.05, 0.95);
+  const bankroll = parseInputNumber(options.bankroll, 100);
+  const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
+  const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
 
   const enriched = matches
     .map((match, index) => {
-      const odd = Number(match.odd) || null;
+      const bestMarket = chooseSafestMarket(match.marketCandidates || [], risk);
+      const odd = Number(bestMarket?.odd || match.odd) || null;
       const confidence = clamp(
-        Number(match.confidence) || confidenceFromOdd(odd),
+        Number(bestMarket?.confidence || match.confidence) || confidenceFromOdd(odd),
         0.35,
         0.88
       );
-      const mainPick = match.pick || "1X";
+      const mainPick = bestMarket?.market || match.pick || "1X";
       const backupPick = match.backupPick || backupPickFor(mainPick);
 
       return {
@@ -164,81 +899,111 @@ function buildParachuteSystem(matches, options) {
         backupPick,
         odd,
         confidence,
+        safetyScore: Number(bestMarket?.score || confidence),
+        selectionReason: bestMarket?.rationale || match.selectionReason || "Scelta prudenziale su confidenza stimata.",
+        marketCandidates: (match.marketCandidates || []).slice(0, 5),
+        selectionScore: matchSelectionScore(
+          {
+            mainPick,
+            confidence,
+            odd
+          },
+          risk
+        ),
+        matchday: match.matchday || "Giornata ND",
+        kickoff: match.kickoff || null,
+        kickoffSlot: match.kickoffSlot || null,
         source: match.source || "scraping"
       };
     })
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, maxMatches);
+    .sort((a, b) => b.selectionScore - a.selectionScore);
 
-  const systemSize = clamp(Math.round(enriched.length * (0.6 + risk * 0.3)), 2, 6);
-  const selectedForSystem = enriched.slice(0, Math.max(systemSize, 2));
+  const aligned = chooseAlignedPool(enriched.slice(0, maxMatches));
 
-  const baseEvents = selectedForSystem.map((event) => ({
-    match: event.match,
-    pick: event.mainPick,
-    odd: oddForPick(event.odd, false),
-    confidence: event.confidence,
-    role: "main"
-  }));
+  let selectedForSystem = aligned.pool
+    .sort((a, b) => b.selectionScore - a.selectionScore)
+    .slice(0, 3);
 
-  const lowConfidenceCount = clamp(
-    Math.round(selectedForSystem.length * (0.25 + risk * 0.45)),
-    1,
-    Math.max(1, selectedForSystem.length - 1)
-  );
-
-  const hedgable = [...selectedForSystem]
-    .sort((a, b) => a.confidence - b.confidence)
-    .slice(0, lowConfidenceCount);
-
-  const tickets = [];
-
-  tickets.push({
-    type: "Base",
-    events: baseEvents,
-    ...scoreTicket(baseEvents)
-  });
-
-  for (const hedgeTarget of hedgable) {
-    const hedgeEvents = selectedForSystem.map((event) => {
-      const isTarget = event.id === hedgeTarget.id;
-      const pick = isTarget ? event.backupPick : event.mainPick;
-      const odd = oddForPick(event.odd, isTarget);
-      const confidence = isTarget
-        ? clamp(event.confidence + 0.08, 0.35, 0.92)
-        : event.confidence;
-      return {
-        match: event.match,
-        pick,
-        odd,
-        confidence,
-        role: isTarget ? "hedge" : "main"
-      };
-    });
-
-    tickets.push({
-      type: `Hedge su ${hedgeTarget.match}`,
-      events: hedgeEvents,
-      ...scoreTicket(hedgeEvents)
-    });
+  if (selectedForSystem.length < 3) {
+    const fallbackAligned = getFallbackMatches()
+      .map((item) => ({
+        id: item.id,
+        match: item.match,
+        mainPick: item.pick,
+        backupPick: item.backupPick,
+        odd: item.odd,
+        confidence: item.confidence,
+        safetyScore: item.confidence,
+        selectionReason: item.marketCandidates?.[0]?.rationale,
+        marketCandidates: item.marketCandidates || [],
+        selectionScore: matchSelectionScore(
+          {
+            mainPick: item.pick,
+            confidence: item.confidence,
+            odd: item.odd
+          },
+          risk
+        ),
+        matchday: item.matchday,
+        kickoff: item.kickoff,
+        kickoffSlot: item.kickoffSlot,
+        source: item.source
+      }))
+      .sort((a, b) => b.selectionScore - a.selectionScore)
+      .slice(0, 3);
+    selectedForSystem = fallbackAligned;
   }
 
-  const baseStake = bankroll * (0.45 - risk * 0.2);
-  const hedgeTotal = bankroll - baseStake;
-  const hedgeStake = tickets.length > 1 ? hedgeTotal / (tickets.length - 1) : 0;
+  const candidateTickets = buildCandidateTickets(selectedForSystem);
+  const evEligibleTickets = candidateTickets.filter((ticket) => ticket.evRatio >= 1);
+  const activeTickets = evEligibleTickets.length ? evEligibleTickets : [];
 
-  const settledTickets = tickets.map((ticket, index) => {
-    const stake = index === 0 ? baseStake : hedgeStake;
-    const expectedReturn = stake * ticket.odd * ticket.probability;
+  const totalProbabilityWeight =
+    activeTickets.reduce((acc, ticket) => acc + ticket.probability, 0) || 1;
+
+  const weightedEvRatio =
+    activeTickets.reduce((acc, ticket) => acc + ticket.evRatio * ticket.probability, 0) /
+    totalProbabilityWeight;
+
+  const riskInvestFraction = clamp(0.2 + risk * 0.7, 0.2, 0.95);
+  const investableBudget =
+    activeTickets.length && weightedEvRatio >= 1
+      ? bankroll * riskInvestFraction
+      : 0;
+
+  const settledCandidates = candidateTickets.map((ticket) => {
+    const isActive = activeTickets.some((active) => active.type === ticket.type);
+    const stake = isActive
+      ? (ticket.probability / totalProbabilityWeight) * investableBudget
+      : 0;
+    const expectedReturn = stake * ticket.evRatio;
     return {
       ...ticket,
       stake: Number(stake.toFixed(2)),
       odd: Number(ticket.odd.toFixed(2)),
       probability: Number(ticket.probability.toFixed(4)),
+      evRatio: Number(ticket.evRatio.toFixed(4)),
       expectedReturn: Number(expectedReturn.toFixed(2)),
       grossIfWin: Number((stake * ticket.odd).toFixed(2))
     };
   });
+
+  const allocatedStake = settledCandidates.reduce((acc, item) => acc + item.stake, 0);
+  const reserveStake = Number((bankroll - allocatedStake).toFixed(2));
+
+  const reserveTicket = {
+    type: "Riserva prudente",
+    format: "cash",
+    events: [],
+    probability: 1,
+    odd: 1,
+    evRatio: 1,
+    stake: reserveStake,
+    expectedReturn: reserveStake,
+    grossIfWin: reserveStake
+  };
+
+  const settledTickets = [...settledCandidates, reserveTicket];
 
   const payoutMin = Math.min(...settledTickets.map((item) => item.grossIfWin));
   const payoutMax = Math.max(...settledTickets.map((item) => item.grossIfWin));
@@ -247,7 +1012,20 @@ function buildParachuteSystem(matches, options) {
     0
   );
 
-  const allMainCombinations = combinations(baseEvents, Math.min(3, baseEvents.length));
+  const activeSuccess = settledCandidates.filter((ticket) => ticket.stake > 0);
+  const successProbabilityApprox =
+    activeSuccess.length === 0
+      ? 1
+      : 1 -
+        activeSuccess.reduce(
+          (acc, item) => acc * (1 - clamp(item.probability, 0.001, 0.999)),
+          1
+        );
+
+  const allMainCombinations = combinations(
+    selectedForSystem.map((event) => normalizedEvent(event, false)),
+    2
+  );
 
   return {
     sourceMatches: matches.length,
@@ -260,10 +1038,30 @@ function buildParachuteSystem(matches, options) {
       payoutMax: Number(payoutMax.toFixed(2)),
       expectedPortfolio: Number(expectedPortfolio.toFixed(2)),
       coverageTickets: settledTickets.length,
-      combinationCount: allMainCombinations.length
+      combinationCount: allMainCombinations.length + 1,
+      successProbability: Number(successProbabilityApprox.toFixed(4)),
+      expectedEdge: Number((expectedPortfolio - bankroll).toFixed(2)),
+      alignment: {
+        matchday: selectedForSystem[0]?.matchday || aligned.selectedMatchday,
+        strictMatchday: true,
+        slot: selectedForSystem[0]?.kickoffSlot || aligned.selectedSlot,
+        strictSlot: Boolean(aligned.strictSlot)
+      },
+      systemFormat: "2/3 + 3/3"
     },
+    strategy: buildHeuristicStrategy(
+      selectedForSystem,
+      risk,
+      {
+        expectedEdge: Number((expectedPortfolio - bankroll).toFixed(2)),
+        successProbability: Number(successProbabilityApprox.toFixed(4))
+      }
+    ),
     notes: [
-      "Strategia paracadute: ticket base + coperture sulle partite a confidenza minore.",
+      "Selezioni allineate sulla stessa giornata; slot orario applicato quando disponibile.",
+      "Copertura distribuita su tutte le partite con ticket hedge dedicati.",
+      "Stake allocato in proporzione alla probabilità dei ticket attivi.",
+      "Vincolo EV non negativo: se EV<0 la quota resta in riserva prudente.",
       "Le probabilità sono stime e non garantiscono profitto.",
       "Verifica sempre quote aggiornate prima di giocare."
     ]
@@ -271,6 +1069,14 @@ function buildParachuteSystem(matches, options) {
 }
 
 function getFallbackMatches() {
+  const today = toStartOfDay(new Date());
+  const d1 = new Date(today);
+  const d2 = new Date(today);
+  const d3 = new Date(today);
+  d1.setDate(today.getDate() + 1);
+  d2.setDate(today.getDate() + 3);
+  d3.setDate(today.getDate() + 6);
+
   return [
     {
       id: "fallback-1",
@@ -279,6 +1085,15 @@ function getFallbackMatches() {
       backupPick: "1X",
       odd: 1.65,
       confidence: 0.61,
+      marketCandidates: [
+        { market: "1X", confidence: 0.61, odd: 1.65, rationale: "Fallback forma casa." },
+        { market: "OVER 1.5", confidence: 0.59, odd: 1.72, rationale: "Fallback gol attesi." },
+        { market: "UNDER 3.5", confidence: 0.58, odd: 1.74, rationale: "Fallback varianza contenuta." }
+      ],
+      matchday: "Giornata 27",
+      kickoff: "20:45",
+      kickoffSlot: "Sera",
+      matchDate: toIsoDate(d1),
       raw: "Dato di fallback",
       source: "fallback"
     },
@@ -289,6 +1104,15 @@ function getFallbackMatches() {
       backupPick: "OVER 1.5",
       odd: 1.78,
       confidence: 0.57,
+      marketCandidates: [
+        { market: "GG", confidence: 0.57, odd: 1.78, rationale: "Fallback attacco bilanciato." },
+        { market: "OVER 1.5", confidence: 0.6, odd: 1.7, rationale: "Fallback prudente gol." },
+        { market: "MULTIGOAL 1-3", confidence: 0.58, odd: 1.76, rationale: "Fallback range gol." }
+      ],
+      matchday: "Giornata 27",
+      kickoff: "20:45",
+      kickoffSlot: "Sera",
+      matchDate: toIsoDate(d2),
       raw: "Dato di fallback",
       source: "fallback"
     },
@@ -299,6 +1123,15 @@ function getFallbackMatches() {
       backupPick: "1",
       odd: 1.42,
       confidence: 0.68,
+      marketCandidates: [
+        { market: "1X", confidence: 0.68, odd: 1.42, rationale: "Fallback esito coperto." },
+        { market: "UNDER 3.5", confidence: 0.63, odd: 1.58, rationale: "Fallback prudente." },
+        { market: "HOME OVER 0.5", confidence: 0.62, odd: 1.6, rationale: "Fallback gol casa." }
+      ],
+      matchday: "Giornata 27",
+      kickoff: "18:00",
+      kickoffSlot: "Sera",
+      matchDate: toIsoDate(d3),
       raw: "Dato di fallback",
       source: "fallback"
     }
@@ -334,6 +1167,12 @@ async function scrapeSerieAPicks(url) {
     }
   });
 
+  const pageMatchday =
+    lines
+      .map((line) => extractMatchday(line))
+      .find((value) => Boolean(value)) || "Giornata ND";
+  const referenceDate = new Date();
+
   const seen = new Set();
   const picks = [];
 
@@ -353,6 +1192,10 @@ async function scrapeSerieAPicks(url) {
 
     const odd = extractOdds(line);
     const confidence = confidenceFromOdd(odd);
+    const kickoff = extractKickoff(line);
+    const kickoffSlot = slotFromKickoff(kickoff);
+    const matchday = extractMatchday(line) || pageMatchday;
+    const parsedDate = parseDateFromText(line, referenceDate);
 
     picks.push({
       id: `s-${picks.length + 1}`,
@@ -361,6 +1204,10 @@ async function scrapeSerieAPicks(url) {
       backupPick: backupPickFor(pick),
       odd,
       confidence: Number(confidence.toFixed(3)),
+      matchday,
+      kickoff,
+      kickoffSlot,
+      matchDate: parsedDate ? toIsoDate(parsedDate) : null,
       raw: line,
       source: "mondopengwin"
     });
@@ -424,16 +1271,32 @@ async function askLlmForRefinement(payload) {
 }
 
 app.get("/api/health", (_, res) => {
-  res.json({ ok: true, sourceUrl });
+  res.json({
+    ok: true,
+    sourceUrl,
+    sofaBaseUrl
+  });
 });
 
 app.get("/api/matches", async (_, res) => {
   try {
-    const matches = await scrapeSerieAPicks(sourceUrl);
+    const risk = clamp(parseInputNumber(_.query?.risk, 0.45), 0.05, 0.95);
+    const maxMatches = clamp(parseInputNumber(_.query?.maxMatches, 10), 2, 20);
+    const timeRangeDays = clamp(parseInputNumber(_.query?.timeRangeDays, 7), 1, 14);
+    const unified = await getUnifiedMatches(timeRangeDays);
+    const riskAware = rankMatchesForRisk(
+      applyRiskProfileToMatches(unified.matches, risk),
+      risk,
+      maxMatches
+    );
+
     res.json({
       sourceUrl,
-      count: matches.length,
-      matches
+      sourceType: unified.source,
+      risk,
+      count: riskAware.length,
+      timeRangeDays,
+      matches: riskAware
     });
   } catch (error) {
     res.status(500).json({
@@ -446,13 +1309,23 @@ app.get("/api/matches", async (_, res) => {
 app.post("/api/predict", async (req, res) => {
   try {
     const options = req.body || {};
-    const matches = await scrapeSerieAPicks(sourceUrl);
-    const system = buildParachuteSystem(matches, options);
+    const timeRangeDays = clamp(parseInputNumber(options.timeRangeDays, 7), 1, 14);
+    const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
+    const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
+    const unified = await getUnifiedMatches(timeRangeDays);
+    const riskAware = rankMatchesForRisk(
+      applyRiskProfileToMatches(unified.matches, risk),
+      risk,
+      maxMatches
+    );
+    const system = buildParachuteSystem(riskAware, options);
     const llm = await askLlmForRefinement(system);
 
     res.json({
       generatedAt: new Date().toISOString(),
       sourceUrl,
+      sourceType: unified.source,
+      timeRangeDays,
       system,
       llm
     });
