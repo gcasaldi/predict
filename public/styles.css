@@ -1,0 +1,125 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5rem;
+}
+
+p {
+  margin: 0.2rem 0;
+}
+
+.card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.warning {
+  border-color: #f59e0b;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+}
+
+input {
+  border: 1px solid #475569;
+  background: #0b1220;
+  color: inherit;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.actions button:first-child {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.actions button:last-child {
+  background: #22c55e;
+  color: #0f172a;
+}
+
+.list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.item {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 0.8rem;
+  background: #0b1220;
+}
+
+.item ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.summary-grid div {
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.6rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.summary-grid span {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.error {
+  color: #fca5a5;
+}
