@@ -12,6 +12,7 @@ const riskLabelEl = document.querySelector("#riskLabel");
 
 const loadMatchesBtn = document.querySelector("#loadMatchesBtn");
 const generateBtn = document.querySelector("#generateBtn");
+const trainingMetaEl = document.querySelector("#trainingMeta");
 
 function euro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -96,6 +97,7 @@ function renderMatches(matches, meta = {}) {
 function renderSystem(payload) {
   const { system, llm } = payload;
   const { summary, tickets, notes, strategy } = system;
+  const training = payload.aiTraining;
 
   summaryEl.innerHTML = `
     <div class="success-meter">
@@ -127,6 +129,7 @@ function renderSystem(payload) {
         <h3>${ticket.type}</h3>
         <p>Stake: <strong>${euro(ticket.stake)}</strong> · Quota totale: <strong>${ticket.odd}</strong> · Formato: <strong>${ticket.format || "ND"}</strong></p>
         <p>Probabilità ticket: <strong>${percent(ticket.probability)}</strong> · EV ratio: <strong>${ticket.evRatio ?? "n/d"}</strong> · Lordo se vince: <strong>${euro(ticket.grossIfWin)}</strong></p>
+        ${ticket.format === "liquidita" ? `<p><strong>Significato:</strong> è budget tenuto fermo per sicurezza, non è una giocata.</p>` : ""}
         <ul>
           ${ticket.events
             .map(
@@ -148,6 +151,7 @@ function renderSystem(payload) {
           ${(strategy.criteria || []).map((item) => `<li>${item}</li>`).join("")}
         </ul>
         <p>Probabilità sistema: <strong>${percent(strategy.successProbability || 0)}</strong> · Edge stimato: <strong>${euro(strategy.expectedEdge || 0)}</strong></p>
+        <p>Training AI: <strong>${training?.updatedAt ? "attivo" : "base"}</strong>${training?.updatedAt ? ` · Aggiornato: ${training.updatedAt.slice(0, 16).replace("T", " ")}` : ""}</p>
         <h4>Scelte partita</h4>
         <ul>
           ${(strategy.matchDecisions || [])
@@ -189,11 +193,20 @@ async function loadMatches() {
       throw new Error("Errore nel recupero delle partite.");
     }
     const payload = await response.json();
+    const training = payload.aiTraining;
+    if (trainingMetaEl) {
+      trainingMetaEl.textContent = training?.updatedAt
+        ? `AI calibrata su risultati recenti (${training.sampleSize || 0} partite campione).`
+        : "AI in modalità base (calibrazione non ancora disponibile).";
+    }
     renderMatches(payload.matches || [], {
       sourceType: payload.sourceType,
       timeRangeDays: payload.timeRangeDays
     });
   } catch (error) {
+    if (trainingMetaEl) {
+      trainingMetaEl.textContent = "";
+    }
     matchesMetaEl.textContent = "";
     matchesEl.innerHTML = `<p class="error">${error.message}</p>`;
   }

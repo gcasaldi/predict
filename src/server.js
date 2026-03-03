@@ -12,6 +12,122 @@ const sofaBaseUrl =
   process.env.SOFASCORE_BASE_URL ||
   "https://www.sofascore.com/api/v1";
 const unifiedCache = new Map();
+const aiTrainingState = {
+  updatedAt: null,
+  sampleSize: 0,
+  marketHitRates: {}
+};
+
+const MARKET_UNIVERSE = {
+  esito: [
+    "1",
+    "X",
+    "2",
+    "1X",
+    "X2",
+    "12",
+    "Draw No Bet",
+    "Qualificata"
+  ],
+  goalTotali: [
+    "GG",
+    "NG",
+    "Over 0.5",
+    "Over 1.5",
+    "Over 2.5",
+    "Over 3.5",
+    "Under 0.5",
+    "Under 1.5",
+    "Under 2.5",
+    "Under 3.5",
+    "Over/Under squadra casa",
+    "Over/Under squadra ospite",
+    "Over/Under 1° tempo",
+    "Over/Under 2° tempo"
+  ],
+  handicap: [
+    "Handicap europeo",
+    "Handicap asiatico",
+    "Handicap 1° tempo",
+    "Handicap 2° tempo"
+  ],
+  risultati: [
+    "Risultato esatto",
+    "Risultato esatto 1° tempo",
+    "Parziale/Finale",
+    "Doppia chance + risultato",
+    "Multigol",
+    "Multigol casa",
+    "Multigol ospite"
+  ],
+  combo: [
+    "1 + Over 1.5",
+    "1X + Under 3.5",
+    "GG + Over 2.5",
+    "2 + Over 2.5",
+    "Combo personalizzate"
+  ],
+  marcatori: [
+    "Segna sì/no",
+    "Primo marcatore",
+    "Ultimo marcatore",
+    "Doppietta",
+    "Tripletta",
+    "Segna su rigore"
+  ],
+  statsMatch: [
+    "Calci d’angolo Over/Under",
+    "Calci d’angolo squadra",
+    "Cartellini Over/Under",
+    "Cartellini squadra",
+    "Tiri totali",
+    "Tiri in porta",
+    "Possesso palla",
+    "Falli",
+    "Rigore sì/no",
+    "Espulsione sì/no"
+  ],
+  tempi: [
+    "Esito 1° tempo",
+    "Esito 2° tempo",
+    "Goal 1° tempo",
+    "Goal 2° tempo",
+    "Squadra segna in entrambi i tempi",
+    "Vince almeno un tempo"
+  ],
+  live: [
+    "Modalità live su tutti i mercati",
+    "Prossimo goal",
+    "Squadra segna prossimo goal",
+    "Goal nei prossimi X minuti"
+  ]
+};
+
+function getMarketUniverseSummary() {
+  return {
+    ...MARKET_UNIVERSE,
+    supportedNow: [
+      "1",
+      "2",
+      "1X",
+      "X2",
+      "GG",
+      "NG",
+      "Over 1.5",
+      "Over 2.5",
+      "Under 2.5",
+      "Under 3.5",
+      "Multigol 1-3",
+      "Multigol 2-4",
+      "Over/Under squadra casa",
+      "Over/Under squadra ospite",
+      "Over/Under 1° tempo",
+      "Over/Under 2° tempo",
+      "1X + Under 3.5",
+      "GG + Over 2.5"
+    ]
+  };
+}
 
 app.use(cors());
 app.use(express.json());
@@ -297,6 +413,78 @@ async function fetchJson(url) {
   }
 }
 
+function marketHitsForEvent(event) {
+  const homeGoals = Number(event?.homeScore?.current ?? 0);
+  const awayGoals = Number(event?.awayScore?.current ?? 0);
+  const totalGoals = homeGoals + awayGoals;
+  const firstHalfGoals =
+    Number(event?.homeScore?.period1 ?? 0) + Number(event?.awayScore?.period1 ?? 0);
+  const secondHalfGoals = Math.max(0, totalGoals - firstHalfGoals);
+
+  return {
+    "OVER 0.5": totalGoals >= 1,
+    "OVER 1.5": totalGoals >= 2,
+    "OVER 2.5": totalGoals >= 3,
+    "UNDER 2.5": totalGoals <= 2,
+    "UNDER 3.5": totalGoals <= 3,
+    GG: homeGoals >= 1 && awayGoals >= 1,
+    NG: homeGoals === 0 || awayGoals === 0,
+    "OVER 0.5 1T": firstHalfGoals >= 1,
+    "OVER 0.5 2T": secondHalfGoals >= 1,
+    "HOME OVER 0.5": homeGoals >= 1,
+    "AWAY OVER 0.5": awayGoals >= 1
+  };
+}
+
+async function recalibrateAiFromRecentResults(days = 30) {
+  const today = toStartOfDay(new Date());
+  const stats = new Map();
+
+  for (let offset = 1; offset <= days; offset += 1) {
+    const target = new Date(today);
+    target.setDate(today.getDate() - offset);
+    const url = `${sofaBaseUrl}/sport/football/scheduled-events/${toIsoDate(target)}`;
+    const payload = await fetchJson(url);
+    const events = payload?.events || [];
+
+    for (const event of events) {
+      const tournamentName = event?.tournament?.uniqueTournament?.name || "";
+      const countryName = event?.tournament?.uniqueTournament?.category?.name || "";
+      const statusType = event?.status?.type;
+      const isFinished = statusType === "finished" || statusType === "after_penalties";
+      const isSerieA = /serie a/i.test(tournamentName) && /(italy|italia)/i.test(countryName);
+      if (!isSerieA || !isFinished) {
+        continue;
+      }
+
+      const hits = marketHitsForEvent(event);
+      for (const [market, hit] of Object.entries(hits)) {
+        if (!stats.has(market)) {
+          stats.set(market, { hit: 0, total: 0 });
+        }
+        const row = stats.get(market);
+        row.total += 1;
+        row.hit += hit ? 1 : 0;
+      }
+    }
+  }
+
+  const marketHitRates = {};
+  let sampleSize = 0;
+  for (const [market, row] of stats.entries()) {
+    if (!row.total) {
+      continue;
+    }
+    sampleSize = Math.max(sampleSize, row.total);
+    marketHitRates[market] = Number((row.hit / row.total).toFixed(3));
+  }
+
+  aiTrainingState.updatedAt = new Date().toISOString();
+  aiTrainingState.sampleSize = sampleSize;
+  aiTrainingState.marketHitRates = marketHitRates;
+  return aiTrainingState;
+}
+
 function normalizeTeamForm(form) {
   if (!form) {
     return {
@@ -313,12 +501,17 @@ function estimateOddFromConfidence(confidence, market) {
   const marginByMarket = {
     "1X": 1.04,
     X2: 1.04,
+    "OVER 0.5": 0.9,
     "OVER 1.5": 1.05,
     "UNDER 3.5": 1.05,
     "HOME OVER 0.5": 1.05,
     "AWAY OVER 0.5": 1.05,
+    "OVER 0.5 1T": 1.08,
+    "OVER 0.5 2T": 1.07,
     "MULTIGOAL 1-3": 1.07,
     "MULTIGOAL 2-4": 1.07,
+    "1X + UNDER 3.5": 1.08,
+    "GG + OVER 2.5": 1.1,
     GG: 1.08,
     NG: 1.08,
     "UNDER 2.5": 1.09,
@@ -396,6 +589,8 @@ function buildMarketCandidates(homeForm, awayForm) {
     3.2
   );
   const expectedTotalGoals = expectedHomeGoals + expectedAwayGoals;
+  const expectedFirstHalfGoals = expectedTotalGoals * 0.46;
+  const expectedSecondHalfGoals = expectedTotalGoals * 0.54;
   const ppgDiff = home.pointsPerGame - away.pointsPerGame;
 
   const candidates = [
@@ -423,6 +618,21 @@ function buildMarketCandidates(homeForm, awayForm) {
       market: "OVER 1.5",
       confidence: clamp(0.55 + (expectedTotalGoals - 1.5) * 0.14, 0.35, 0.86),
       rationale: `Totale gol atteso ${expectedTotalGoals.toFixed(2)}.`
+    },
+    {
+      market: "OVER 0.5",
+      confidence: clamp(0.68 + (expectedTotalGoals - 1.3) * 0.08, 0.45, 0.92),
+      rationale: "Soglia minima gol con affidabilità elevata."
+    },
+    {
+      market: "UNDER 0.5",
+      confidence: clamp(0.18 - (expectedTotalGoals - 0.5) * 0.2, 0.05, 0.25),
+      rationale: "Mercato molto restrittivo, quasi sempre evitato in ottica prudente."
+    },
+    {
+      market: "UNDER 1.5",
+      confidence: clamp(0.34 - (expectedTotalGoals - 1.4) * 0.17, 0.08, 0.46),
+      rationale: "Partita da pochi gol."
     },
     {
       market: "UNDER 3.5",
@@ -460,6 +670,16 @@ function buildMarketCandidates(homeForm, awayForm) {
       rationale: "Range gol centrale con copertura estesa."
     },
     {
+      market: "MULTIGOAL CASA 1-2",
+      confidence: clamp(0.58 - Math.abs(expectedHomeGoals - 1.4) * 0.16, 0.24, 0.78),
+      rationale: "Range gol casa su media attesa."
+    },
+    {
+      market: "MULTIGOAL OSPITE 1-2",
+      confidence: clamp(0.58 - Math.abs(expectedAwayGoals - 1.2) * 0.16, 0.22, 0.78),
+      rationale: "Range gol ospite su media attesa."
+    },
+    {
       market: "HOME OVER 0.5",
       confidence: clamp(0.6 + (expectedHomeGoals - 0.8) * 0.15, 0.3, 0.86),
       rationale: `Gol casa atteso ${expectedHomeGoals.toFixed(2)}.`
@@ -468,6 +688,34 @@ function buildMarketCandidates(homeForm, awayForm) {
       market: "AWAY OVER 0.5",
       confidence: clamp(0.6 + (expectedAwayGoals - 0.8) * 0.15, 0.3, 0.86),
       rationale: `Gol ospite atteso ${expectedAwayGoals.toFixed(2)}.`
+    },
+    {
+      market: "OVER 0.5 1T",
+      confidence: clamp(0.56 + (expectedFirstHalfGoals - 0.7) * 0.14, 0.28, 0.84),
+      rationale: "Probabilità gol nel primo tempo."
+    },
+    {
+      market: "OVER 0.5 2T",
+      confidence: clamp(0.58 + (expectedSecondHalfGoals - 0.8) * 0.14, 0.3, 0.86),
+      rationale: "Probabilità gol nel secondo tempo."
+    },
+    {
+      market: "1X + UNDER 3.5",
+      confidence: clamp(
+        (clamp(0.58 + ppgDiff * 0.11, 0.42, 0.87) + clamp(0.66 - Math.max(0, expectedTotalGoals - 2.7) * 0.16, 0.34, 0.83)) / 2,
+        0.35,
+        0.86
+      ),
+      rationale: "Combo prudente tra copertura esito e limite gol."
+    },
+    {
+      market: "GG + OVER 2.5",
+      confidence: clamp(
+        (clamp(0.4 + Math.min(expectedHomeGoals, expectedAwayGoals) * 0.19, 0.24, 0.79) + clamp(0.41 + (expectedTotalGoals - 2.5) * 0.2, 0.2, 0.79)) / 2,
+        0.2,
+        0.74
+      ),
+      rationale: "Combo offensiva con varianza maggiore."
     }
   ]
     .map((item) => ({
@@ -475,7 +723,7 @@ function buildMarketCandidates(homeForm, awayForm) {
       confidence: Number(item.confidence.toFixed(3)),
       odd: Number(estimateOddFromConfidence(item.confidence, item.market).toFixed(2))
     }))
-    .filter((item) => item.confidence >= 0.35)
+    .filter((item) => item.confidence >= 0.22)
     .sort((a, b) => b.confidence - a.confidence);
 
   return candidates;
@@ -501,12 +749,17 @@ function chooseSafestMarket(candidates, risk) {
   const safetyBias = {
     "1X": 0.06,
     X2: 0.06,
+    "OVER 0.5": -0.06,
     "OVER 1.5": 0.05,
     "UNDER 3.5": 0.05,
     "HOME OVER 0.5": 0.045,
     "AWAY OVER 0.5": 0.045,
+    "OVER 0.5 1T": 0.055,
+    "OVER 0.5 2T": 0.045,
     "MULTIGOAL 1-3": 0.04,
     "MULTIGOAL 2-4": 0.035,
+    "1X + UNDER 3.5": 0.05,
+    "GG + OVER 2.5": -0.02,
     "UNDER 2.5": 0.02,
     GG: 0.015,
     NG: 0.015,
@@ -519,17 +772,42 @@ function chooseSafestMarket(candidates, risk) {
     ? candidates
     : [{ market: "1X", confidence: 0.55, odd: 1.7, rationale: "Fallback prudente." }];
 
-  return [...items]
+  const prudentialFloor = risk <= 0.2 ? 0.56 : risk <= 0.4 ? 0.52 : 0.48;
+  const excludedWhenPrudent = new Set([
+    "UNDER 0.5",
+    "UNDER 1.5",
+    "OVER 0.5",
+    "1",
+    "2",
+    "GG + OVER 2.5"
+  ]);
+
+  const minOdd = risk <= 0.2 ? 1.45 : risk <= 0.45 ? 1.35 : 1.25;
+
+  const filtered = items.filter((item) => {
+    if (risk <= 0.25 && excludedWhenPrudent.has(item.market)) {
+      return false;
+    }
+    return item.confidence >= prudentialFloor && item.odd >= minOdd;
+  });
+
+  const effectiveItems = filtered.length ? filtered : items;
+
+  return [...effectiveItems]
     .map((item) => {
       const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
       const valueWeight = clamp(risk, 0.05, 0.95) * 0.08;
       const oddValue = clamp((item.odd - 1.25) / 2.8, 0, 0.2);
+      const hitRate = Number(aiTrainingState.marketHitRates[item.market] || 0.5);
+      const calibrationBoost = clamp((hitRate - 0.5) * 0.12, -0.03, 0.04);
       const score =
         item.confidence +
         conservativeWeight * (safetyBias[item.market] || 0.02) +
-        valueWeight * oddValue;
+        valueWeight * oddValue +
+        calibrationBoost;
       return {
         ...item,
+        hitRate,
         score: Number(score.toFixed(4))
       };
     })
@@ -992,8 +1270,8 @@ function buildParachuteSystem(matches, options) {
   const reserveStake = Number((bankroll - allocatedStake).toFixed(2));
 
   const reserveTicket = {
-    type: "Riserva prudente",
-    format: "cash",
+    type: "Capitale non investito (sicurezza)",
+    format: "liquidita",
     events: [],
     probability: 1,
     odd: 1,
@@ -1274,8 +1552,28 @@ app.get("/api/health", (_, res) => {
   res.json({
     ok: true,
     sourceUrl,
-    sofaBaseUrl
+    sofaBaseUrl,
+    aiTraining: aiTrainingState,
+    marketUniverse: getMarketUniverseSummary()
   });
+});
+
+app.post("/api/train/recalibrate", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const days = clamp(parseInputNumber(body.days, 30), 7, 90);
+    const training = await recalibrateAiFromRecentResults(days);
+    res.json({
+      ok: true,
+      days,
+      training
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Errore durante ricalibrazione AI.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
 });
 
 app.get("/api/matches", async (_, res) => {
@@ -1296,6 +1594,7 @@ app.get("/api/matches", async (_, res) => {
       risk,
       count: riskAware.length,
       timeRangeDays,
+      marketUniverse: getMarketUniverseSummary(),
       matches: riskAware
     });
   } catch (error) {
@@ -1326,6 +1625,8 @@ app.post("/api/predict", async (req, res) => {
       sourceUrl,
       sourceType: unified.source,
       timeRangeDays,
+      aiTraining: aiTrainingState,
+      marketUniverse: getMarketUniverseSummary(),
       system,
       llm
     });
@@ -1339,4 +1640,5 @@ app.post("/api/predict", async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Predict app attiva su http://localhost:${port}`);
+  recalibrateAiFromRecentResults(30).catch(() => null);
 });
