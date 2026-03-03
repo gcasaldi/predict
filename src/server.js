@@ -137,6 +137,10 @@ function normalizeWhitespace(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function normalizeSearchText(value) {
+  return normalizeWhitespace(String(value || "")).toLowerCase();
+}
+
 function extractOdds(text) {
   const match = text.match(/\b([1-9]\d?|0)\.([0-9]{2})\b/g);
   if (!match?.length) {
@@ -291,7 +295,7 @@ function toIsoDate(date) {
 function withDateWindow(matches, days = 7, referenceDate = new Date()) {
   const today = toStartOfDay(referenceDate);
   const end = new Date(today);
-  end.setDate(end.getDate() + Math.max(1, days));
+  end.setDate(end.getDate() + Math.max(1, days) - 1);
 
   const inWindow = matches.filter((item) => {
     if (!item.matchDate) {
@@ -841,15 +845,53 @@ function valueBiasFromOdd(odd) {
   return clamp((odd - 1.35) / 2.8, 0, 0.25);
 }
 
+function daysFromToday(dateValue, referenceDate = new Date()) {
+  if (!dateValue) {
+    return 999;
+  }
+  const target = toStartOfDay(new Date(dateValue));
+  const today = toStartOfDay(referenceDate);
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
 function matchSelectionScore(match, risk) {
   const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
   const valueWeight = clamp(risk, 0.05, 0.95);
   const stability = marketStabilityBias(match.mainPick || match.pick);
   const confidencePart = Number(match.confidence || 0.5);
   const valuePart = valueBiasFromOdd(Number(match.odd || 1.7));
+  const dayDistance = Math.abs(daysFromToday(match.matchDate));
+  const datePriority = clamp(0.08 - dayDistance * 0.012, 0, 0.08);
   return Number(
-    (confidencePart + conservativeWeight * stability + valueWeight * valuePart).toFixed(4)
+    (
+      confidencePart +
+      conservativeWeight * stability +
+      valueWeight * valuePart +
+      datePriority
+    ).toFixed(4)
   );
+}
+
+function competitionPriorityBoost(match, focusCountry = "Italia") {
+  const country = String(match.country || "").toLowerCase();
+  const tournament = String(match.tournament || "").toLowerCase();
+  const wanted = String(focusCountry || "").toLowerCase();
+  const isItalyFocus = wanted === "italia" || wanted === "italy";
+  const countryMatch = isItalyFocus
+    ? country.includes("italy") || country.includes("italia")
+    : wanted && country.includes(wanted);
+
+  let boost = 0;
+  if (countryMatch) {
+    boost += 0.16;
+  }
+  if (/coppa italia/.test(tournament)) {
+    boost += 0.18;
+  }
+  if (/serie a|serie b/.test(tournament)) {
+    boost += 0.1;
+  }
+  return boost;
 }
 
 function applyRiskProfileToMatches(matches, risk) {
@@ -875,22 +917,28 @@ function applyRiskProfileToMatches(matches, risk) {
   });
 }
 
-function rankMatchesForRisk(matches, risk, maxMatches) {
+function rankMatchesForRisk(matches, risk, maxMatches, focusCountry = "Italia") {
   return [...matches]
     .sort((a, b) => {
-      const scoreA = matchSelectionScore(a, risk);
-      const scoreB = matchSelectionScore(b, risk);
+      const scoreA =
+        matchSelectionScore(a, risk) + competitionPriorityBoost(a, focusCountry);
+      const scoreB =
+        matchSelectionScore(b, risk) + competitionPriorityBoost(b, focusCountry);
       return scoreB - scoreA;
     })
     .slice(0, maxMatches);
 }
 
-async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
+async function fetchSofascoreFootball(
+  days = 7,
+  referenceDate = new Date(),
+  maxEvents = 60
+) {
   const today = toStartOfDay(referenceDate);
   const formCache = new Map();
   const events = [];
 
-  for (let offset = 0; offset <= days; offset += 1) {
+  for (let offset = 0; offset < days; offset += 1) {
     const target = new Date(today);
     target.setDate(today.getDate() + offset);
     const dateToken = toIsoDate(target);
@@ -900,13 +948,7 @@ async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
       continue;
     }
 
-    const serieAEvents = payload.events.filter((event) => {
-      const tournamentName = event?.tournament?.uniqueTournament?.name || "";
-      const countryName = event?.tournament?.uniqueTournament?.category?.name || "";
-      return /serie a/i.test(tournamentName) && /(italy|italia)/i.test(countryName);
-    });
-
-    events.push(...serieAEvents);
+    events.push(...payload.events);
   }
 
   const unique = new Map();
@@ -918,8 +960,20 @@ async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
     unique.set(key, event);
   }
 
+  const candidates = [...unique.values()]
+    .filter((event) => {
+      const startTimestamp = event?.startTimestamp;
+      if (!startTimestamp) {
+        return false;
+      }
+      const eventDate = new Date(startTimestamp * 1000);
+      return toStartOfDay(eventDate) >= today;
+    })
+    .sort((a, b) => Number(a?.startTimestamp || 0) - Number(b?.startTimestamp || 0))
+    .slice(0, Math.max(20, maxEvents));
+
   const picks = [];
-  for (const event of unique.values()) {
+  for (const event of candidates) {
     const startTimestamp = event?.startTimestamp;
     if (!startTimestamp) {
       continue;
@@ -959,6 +1013,8 @@ async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
       matchday: event?.roundInfo?.round
         ? `Giornata ${event.roundInfo.round}`
         : "Giornata ND",
+      tournament: event?.tournament?.uniqueTournament?.name || "Campionato ND",
+      country: event?.tournament?.uniqueTournament?.category?.name || "Paese ND",
       kickoff,
       kickoffSlot: slotFromKickoff(kickoff),
       matchDate: toIsoDate(eventDate),
@@ -976,7 +1032,7 @@ async function fetchSofascoreSerieA(days = 7, referenceDate = new Date()) {
   return picks;
 }
 
-async function getUnifiedMatches(timeRangeDays = 7) {
+async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10) {
   const cacheKey = String(timeRangeDays);
   const cached = unifiedCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 5 * 60 * 1000) {
@@ -984,7 +1040,7 @@ async function getUnifiedMatches(timeRangeDays = 7) {
   }
 
   const [sofaMatches, mondoMatches] = await Promise.all([
-    fetchSofascoreSerieA(timeRangeDays),
+    fetchSofascoreFootball(timeRangeDays, new Date(), Math.max(maxMatches * 4, 28)),
     scrapeSerieAPicks(sourceUrl)
   ]);
 
@@ -992,7 +1048,7 @@ async function getUnifiedMatches(timeRangeDays = 7) {
   if (sofaInWindow.length >= 3) {
     const payload = {
       matches: sofaInWindow,
-      source: "sofascore"
+      source: "sofascore-football"
     };
     unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
     return payload;
@@ -1027,18 +1083,35 @@ async function getUnifiedMatches(timeRangeDays = 7) {
   return payload;
 }
 
-function chooseAlignedPool(items) {
-  const byMatchday = new Map();
-  for (const item of items) {
-    const key = item.matchday || "Giornata ND";
-    if (!byMatchday.has(key)) {
-      byMatchday.set(key, []);
-    }
-    byMatchday.get(key).push(item);
+function filterMatchesByTeam(matches, teamQuery) {
+  const query = normalizeSearchText(teamQuery);
+  if (!query) {
+    return matches;
   }
 
-  const dayEntries = [...byMatchday.entries()].sort((a, b) => b[1].length - a[1].length);
-  const [selectedMatchday, dayItems] = dayEntries[0] || ["Giornata ND", []];
+  return matches.filter((match) => {
+    const text = normalizeSearchText(match.match);
+    return text.includes(query);
+  });
+}
+
+function chooseAlignedPool(items) {
+  const byMatchDate = new Map();
+  for (const item of items) {
+    const key = item.matchDate || "DATA_ND";
+    if (!byMatchDate.has(key)) {
+      byMatchDate.set(key, []);
+    }
+    byMatchDate.get(key).push(item);
+  }
+
+  const dayEntries = [...byMatchDate.entries()].sort((a, b) => {
+    if (b[1].length !== a[1].length) {
+      return b[1].length - a[1].length;
+    }
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+  const [selectedDate, dayItems] = dayEntries[0] || ["DATA_ND", []];
 
   const bySlot = new Map();
   for (const item of dayItems) {
@@ -1057,7 +1130,7 @@ function chooseAlignedPool(items) {
 
   return {
     pool,
-    selectedMatchday,
+    selectedDate,
     selectedSlot: strictSlot ? selectedSlot : null,
     strictSlot
   };
@@ -1184,10 +1257,12 @@ function buildParachuteSystem(matches, options) {
           {
             mainPick,
             confidence,
-            odd
+            odd,
+            matchDate: match.matchDate
           },
           risk
         ),
+        matchDate: match.matchDate || null,
         matchday: match.matchday || "Giornata ND",
         kickoff: match.kickoff || null,
         kickoffSlot: match.kickoffSlot || null,
@@ -1203,33 +1278,43 @@ function buildParachuteSystem(matches, options) {
     .slice(0, 3);
 
   if (selectedForSystem.length < 3) {
-    const fallbackAligned = getFallbackMatches()
-      .map((item) => ({
-        id: item.id,
-        match: item.match,
-        mainPick: item.pick,
-        backupPick: item.backupPick,
-        odd: item.odd,
-        confidence: item.confidence,
-        safetyScore: item.confidence,
-        selectionReason: item.marketCandidates?.[0]?.rationale,
-        marketCandidates: item.marketCandidates || [],
-        selectionScore: matchSelectionScore(
-          {
-            mainPick: item.pick,
-            confidence: item.confidence,
-            odd: item.odd
-          },
-          risk
-        ),
-        matchday: item.matchday,
-        kickoff: item.kickoff,
-        kickoffSlot: item.kickoffSlot,
-        source: item.source
-      }))
+    const fromCurrentWindow = [...enriched]
       .sort((a, b) => b.selectionScore - a.selectionScore)
       .slice(0, 3);
-    selectedForSystem = fallbackAligned;
+
+    if (fromCurrentWindow.length >= 3) {
+      selectedForSystem = fromCurrentWindow;
+    } else {
+      const fallbackAligned = getFallbackMatches()
+        .map((item) => ({
+          id: item.id,
+          match: item.match,
+          mainPick: item.pick,
+          backupPick: item.backupPick,
+          odd: item.odd,
+          confidence: item.confidence,
+          safetyScore: item.confidence,
+          selectionReason: item.marketCandidates?.[0]?.rationale,
+          marketCandidates: item.marketCandidates || [],
+          selectionScore: matchSelectionScore(
+            {
+              mainPick: item.pick,
+              confidence: item.confidence,
+              odd: item.odd,
+              matchDate: item.matchDate
+            },
+            risk
+          ),
+          matchDate: item.matchDate || null,
+          matchday: item.matchday,
+          kickoff: item.kickoff,
+          kickoffSlot: item.kickoffSlot,
+          source: item.source
+        }))
+        .sort((a, b) => b.selectionScore - a.selectionScore)
+        .slice(0, 3);
+      selectedForSystem = fallbackAligned;
+    }
   }
 
   const candidateTickets = buildCandidateTickets(selectedForSystem);
@@ -1320,7 +1405,8 @@ function buildParachuteSystem(matches, options) {
       successProbability: Number(successProbabilityApprox.toFixed(4)),
       expectedEdge: Number((expectedPortfolio - bankroll).toFixed(2)),
       alignment: {
-        matchday: selectedForSystem[0]?.matchday || aligned.selectedMatchday,
+        matchday: selectedForSystem[0]?.matchday || "Giornata ND",
+        matchDate: selectedForSystem[0]?.matchDate || aligned.selectedDate,
         strictMatchday: true,
         slot: selectedForSystem[0]?.kickoffSlot || aligned.selectedSlot,
         strictSlot: Boolean(aligned.strictSlot)
@@ -1581,16 +1667,22 @@ app.get("/api/matches", async (_, res) => {
     const risk = clamp(parseInputNumber(_.query?.risk, 0.45), 0.05, 0.95);
     const maxMatches = clamp(parseInputNumber(_.query?.maxMatches, 10), 2, 20);
     const timeRangeDays = clamp(parseInputNumber(_.query?.timeRangeDays, 7), 1, 14);
-    const unified = await getUnifiedMatches(timeRangeDays);
+    const focusCountry = String(_.query?.focusCountry || "Italia");
+    const teamQuery = String(_.query?.teamQuery || "");
+    const unified = await getUnifiedMatches(timeRangeDays, maxMatches);
+    const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const riskAware = rankMatchesForRisk(
-      applyRiskProfileToMatches(unified.matches, risk),
+      applyRiskProfileToMatches(teamFiltered, risk),
       risk,
-      maxMatches
+      maxMatches,
+      focusCountry
     );
 
     res.json({
       sourceUrl,
       sourceType: unified.source,
+      focusCountry,
+      teamQuery,
       risk,
       count: riskAware.length,
       timeRangeDays,
@@ -1611,11 +1703,15 @@ app.post("/api/predict", async (req, res) => {
     const timeRangeDays = clamp(parseInputNumber(options.timeRangeDays, 7), 1, 14);
     const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
     const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
-    const unified = await getUnifiedMatches(timeRangeDays);
+    const focusCountry = String(options.focusCountry || "Italia");
+    const teamQuery = String(options.teamQuery || "");
+    const unified = await getUnifiedMatches(timeRangeDays, maxMatches);
+    const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const riskAware = rankMatchesForRisk(
-      applyRiskProfileToMatches(unified.matches, risk),
+      applyRiskProfileToMatches(teamFiltered, risk),
       risk,
-      maxMatches
+      maxMatches,
+      focusCountry
     );
     const system = buildParachuteSystem(riskAware, options);
     const llm = await askLlmForRefinement(system);
@@ -1624,6 +1720,8 @@ app.post("/api/predict", async (req, res) => {
       generatedAt: new Date().toISOString(),
       sourceUrl,
       sourceType: unified.source,
+      focusCountry,
+      teamQuery,
       timeRangeDays,
       aiTraining: aiTrainingState,
       marketUniverse: getMarketUniverseSummary(),

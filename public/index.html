@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Predict Serie A</title>
+    <title>Predict Calcio</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="container">
       <header>
-        <h1>Predict Serie A</h1>
+        <h1>Predict Calcio</h1>
         <p>
-          Strategia a sistema “paracadute” basata su dati pubblici e stima AI.
+          Strategia a sistema “paracadute” basata su dati pubblici e stima AI su tutti i campionati calcio disponibili.
         </p>
       </header>
 
@@ -38,6 +38,13 @@
             <input id="risk" type="range" min="5" max="95" step="5" value="45" />
             <small id="riskLabel">45% · Bilanciato</small>
           </label>
+        </div>
+        <div class="search-row">
+          <label>
+            Cerca squadra
+            <input id="teamQuery" type="text" placeholder="Es. Como, Inter, Milan" />
+          </label>
+          <button id="searchTeamBtn">Cerca squadra</button>
         </div>
         <div class="actions">
           <button id="loadMatchesBtn">Carica partite</button>

@@ -9,9 +9,11 @@ const bankrollEl = document.querySelector("#bankroll");
 const maxMatchesEl = document.querySelector("#maxMatches");
 const riskEl = document.querySelector("#risk");
 const riskLabelEl = document.querySelector("#riskLabel");
+const teamQueryEl = document.querySelector("#teamQuery");
 
 const loadMatchesBtn = document.querySelector("#loadMatchesBtn");
 const generateBtn = document.querySelector("#generateBtn");
+const searchTeamBtn = document.querySelector("#searchTeamBtn");
 const trainingMetaEl = document.querySelector("#trainingMeta");
 
 function euro(value) {
@@ -64,7 +66,8 @@ function renderMatches(matches, meta = {}) {
     return;
   }
 
-  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni`;
+  const teamInfo = meta.teamQuery ? ` · Filtro squadra: ${meta.teamQuery}` : "";
+  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni${teamInfo}`;
 
   matchesEl.innerHTML = matches
     .slice(0, 20)
@@ -75,6 +78,7 @@ function renderMatches(matches, meta = {}) {
         <p>Pick: <strong>${match.pick}</strong> · Backup: <strong>${match.backupPick}</strong></p>
         ${match.safetyScore ? `<p>Indice sicurezza: <strong>${Math.round(match.safetyScore * 100)}%</strong></p>` : ""}
         <p>Data: ${match.matchDate || "ND"} · Giornata: ${match.matchday || "ND"}</p>
+        <p>Campionato: ${match.tournament || "ND"} · Paese: ${match.country || "ND"}</p>
         <p>Slot: ${match.kickoffSlot || "ND"} ${match.kickoff ? `· ${match.kickoff}` : ""}</p>
         <p>Fonte match: ${match.source || "n/d"}</p>
         ${match.selectionReason ? `<p>Criterio AI: ${match.selectionReason}</p>` : ""}
@@ -186,9 +190,16 @@ async function loadMatches() {
     const params = new URLSearchParams({
       risk: String(currentRiskDecimal()),
       maxMatches: String(parseLocalizedNumber(maxMatchesEl.value, 10)),
-      timeRangeDays: "7"
+      timeRangeDays: "7",
+      focusCountry: "Italia",
+      teamQuery: (teamQueryEl?.value || "").trim()
     });
-    const response = await fetch(`/api/matches?${params.toString()}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(`/api/matches?${params.toString()}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error("Errore nel recupero delle partite.");
     }
@@ -201,14 +212,19 @@ async function loadMatches() {
     }
     renderMatches(payload.matches || [], {
       sourceType: payload.sourceType,
-      timeRangeDays: payload.timeRangeDays
+      timeRangeDays: payload.timeRangeDays,
+      teamQuery: payload.teamQuery
     });
   } catch (error) {
     if (trainingMetaEl) {
       trainingMetaEl.textContent = "";
     }
     matchesMetaEl.textContent = "";
-    matchesEl.innerHTML = `<p class="error">${error.message}</p>`;
+    const message =
+      error?.name === "AbortError"
+        ? "Recupero partite troppo lento, riprova tra pochi secondi."
+        : error.message;
+    matchesEl.innerHTML = `<p class="error">${message}</p>`;
   }
 }
 
@@ -228,7 +244,9 @@ async function generateSystem() {
         bankroll: parseLocalizedNumber(bankrollEl.value, 100),
         maxMatches: parseLocalizedNumber(maxMatchesEl.value, 5),
         risk: currentRiskDecimal(),
-        timeRangeDays: 7
+        timeRangeDays: 7,
+        focusCountry: "Italia",
+        teamQuery: (teamQueryEl?.value || "").trim()
       })
     });
 
@@ -245,6 +263,7 @@ async function generateSystem() {
 
 loadMatchesBtn.addEventListener("click", loadMatches);
 generateBtn.addEventListener("click", generateSystem);
+searchTeamBtn.addEventListener("click", loadMatches);
 riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
