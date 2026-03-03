@@ -6,6 +6,7 @@ const ticketsEl = document.querySelector("#tickets");
 const notesEl = document.querySelector("#notes");
 
 const bankrollEl = document.querySelector("#bankroll");
+const startDateEl = document.querySelector("#startDate");
 const maxMatchesEl = document.querySelector("#maxMatches");
 const riskEl = document.querySelector("#risk");
 const riskLabelEl = document.querySelector("#riskLabel");
@@ -59,6 +60,26 @@ function updateRiskLabel() {
   riskLabelEl.textContent = `${Math.round(riskDecimal * 100)}% · ${riskProfileLabel(riskDecimal)}`;
 }
 
+function formatIsoDateLocal(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function ensureStartDateDefault() {
+  if (!startDateEl) {
+    return;
+  }
+  if (startDateEl.value) {
+    return;
+  }
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  startDateEl.value = formatIsoDateLocal(tomorrow);
+  startDateEl.min = formatIsoDateLocal(tomorrow);
+}
+
 function renderMatches(matches, meta = {}) {
   if (!matches.length) {
     matchesMetaEl.textContent = "";
@@ -67,7 +88,8 @@ function renderMatches(matches, meta = {}) {
   }
 
   const teamInfo = meta.teamQuery ? ` · Filtro squadra: ${meta.teamQuery}` : "";
-  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni${teamInfo}`;
+  const startInfo = meta.startDate ? ` · Dal: ${meta.startDate}` : "";
+  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni${startInfo}${teamInfo}`;
 
   matchesEl.innerHTML = matches
     .slice(0, 20)
@@ -192,6 +214,7 @@ async function loadMatches() {
       maxMatches: String(parseLocalizedNumber(maxMatchesEl.value, 10)),
       timeRangeDays: "7",
       focusCountry: "Italia",
+      startDate: startDateEl?.value || "",
       teamQuery: (teamQueryEl?.value || "").trim()
     });
     const controller = new AbortController();
@@ -213,6 +236,7 @@ async function loadMatches() {
     renderMatches(payload.matches || [], {
       sourceType: payload.sourceType,
       timeRangeDays: payload.timeRangeDays,
+      startDate: payload.startDate,
       teamQuery: payload.teamQuery
     });
   } catch (error) {
@@ -246,6 +270,7 @@ async function generateSystem() {
         risk: currentRiskDecimal(),
         timeRangeDays: 7,
         focusCountry: "Italia",
+        startDate: startDateEl?.value || "",
         teamQuery: (teamQueryEl?.value || "").trim()
       })
     });
@@ -267,6 +292,8 @@ searchTeamBtn.addEventListener("click", loadMatches);
 riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
+startDateEl.addEventListener("change", loadMatches);
 
 updateRiskLabel();
+ensureStartDateDefault();
 loadMatches();

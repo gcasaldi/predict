@@ -292,7 +292,30 @@ function toIsoDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-function withDateWindow(matches, days = 7, referenceDate = new Date()) {
+function parseIsoDateInput(value, fallback = new Date()) {
+  if (!value) {
+    return toStartOfDay(fallback);
+  }
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return toStartOfDay(fallback);
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return toStartOfDay(fallback);
+  }
+  return toStartOfDay(parsed);
+}
+
+function withDateWindow(matches, days = 7, referenceDate = new Date(), strict = false) {
   const today = toStartOfDay(referenceDate);
   const end = new Date(today);
   end.setDate(end.getDate() + Math.max(1, days) - 1);
@@ -307,6 +330,10 @@ function withDateWindow(matches, days = 7, referenceDate = new Date()) {
 
   if (inWindow.length) {
     return inWindow;
+  }
+
+  if (strict) {
+    return [];
   }
 
   return matches;
@@ -1032,29 +1059,31 @@ async function fetchSofascoreFootball(
   return picks;
 }
 
-async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10) {
-  const cacheKey = String(timeRangeDays);
+async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate = new Date()) {
+  const startDateIso = toIsoDate(toStartOfDay(startDate));
+  const cacheKey = `${timeRangeDays}-${maxMatches}-${startDateIso}`;
   const cached = unifiedCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 5 * 60 * 1000) {
     return cached.payload;
   }
 
   const [sofaMatches, mondoMatches] = await Promise.all([
-    fetchSofascoreFootball(timeRangeDays, new Date(), Math.max(maxMatches * 4, 28)),
+    fetchSofascoreFootball(timeRangeDays, startDate, Math.max(maxMatches * 4, 28)),
     scrapeSerieAPicks(sourceUrl)
   ]);
 
-  const sofaInWindow = withDateWindow(sofaMatches, timeRangeDays);
+  const sofaInWindow = withDateWindow(sofaMatches, timeRangeDays, startDate, true);
   if (sofaInWindow.length >= 3) {
     const payload = {
       matches: sofaInWindow,
-      source: "sofascore-football"
+      source: "sofascore-football",
+      startDate: startDateIso
     };
     unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
     return payload;
   }
 
-  const mondoInWindow = withDateWindow(mondoMatches, timeRangeDays);
+  const mondoInWindow = withDateWindow(mondoMatches, timeRangeDays, startDate, true);
   const merged = new Map();
 
   for (const match of [...sofaInWindow, ...mondoInWindow]) {
@@ -1069,7 +1098,8 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10) {
   if (finalMatches.length) {
     const payload = {
       matches: finalMatches,
-      source: sofaInWindow.length ? "sofascore+mondopengwin" : "mondopengwin"
+      source: sofaInWindow.length ? "sofascore+mondopengwin" : "mondopengwin",
+      startDate: startDateIso
     };
     unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
     return payload;
@@ -1077,7 +1107,8 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10) {
 
   const payload = {
     matches: getFallbackMatches(),
-    source: "fallback"
+    source: "fallback",
+    startDate: startDateIso
   };
   unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
   return payload;
@@ -1089,9 +1120,21 @@ function filterMatchesByTeam(matches, teamQuery) {
     return matches;
   }
 
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const queryRegex = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
+
   return matches.filter((match) => {
-    const text = normalizeSearchText(match.match);
-    return text.includes(query);
+    const raw = String(match.match || "");
+    const [homeRaw = "", awayRaw = ""] = raw.split(/\s+vs\s+/i);
+    const home = normalizeSearchText(homeRaw);
+    const away = normalizeSearchText(awayRaw);
+
+    return (
+      queryRegex.test(home) ||
+      queryRegex.test(away) ||
+      home.startsWith(query) ||
+      away.startsWith(query)
+    );
   });
 }
 
@@ -1669,7 +1712,8 @@ app.get("/api/matches", async (_, res) => {
     const timeRangeDays = clamp(parseInputNumber(_.query?.timeRangeDays, 7), 1, 14);
     const focusCountry = String(_.query?.focusCountry || "Italia");
     const teamQuery = String(_.query?.teamQuery || "");
-    const unified = await getUnifiedMatches(timeRangeDays, maxMatches);
+    const startDate = parseIsoDateInput(_.query?.startDate, new Date());
+    const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const riskAware = rankMatchesForRisk(
       applyRiskProfileToMatches(teamFiltered, risk),
@@ -1683,6 +1727,7 @@ app.get("/api/matches", async (_, res) => {
       sourceType: unified.source,
       focusCountry,
       teamQuery,
+      startDate: unified.startDate,
       risk,
       count: riskAware.length,
       timeRangeDays,
@@ -1705,7 +1750,8 @@ app.post("/api/predict", async (req, res) => {
     const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
     const focusCountry = String(options.focusCountry || "Italia");
     const teamQuery = String(options.teamQuery || "");
-    const unified = await getUnifiedMatches(timeRangeDays, maxMatches);
+    const startDate = parseIsoDateInput(options.startDate, new Date());
+    const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const riskAware = rankMatchesForRisk(
       applyRiskProfileToMatches(teamFiltered, risk),
@@ -1722,6 +1768,7 @@ app.post("/api/predict", async (req, res) => {
       sourceType: unified.source,
       focusCountry,
       teamQuery,
+      startDate: unified.startDate,
       timeRangeDays,
       aiTraining: aiTrainingState,
       marketUniverse: getMarketUniverseSummary(),
