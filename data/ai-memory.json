@@ -1,6 +1,266 @@
 {
-  "savedAt": "2026-03-04T13:50:38.387Z",
+  "savedAt": "2026-03-04T14:53:09.783Z",
   "predictionHistory": [
+    {
+      "id": "pred-1772635394314-g4l6bl",
+      "generatedAt": "2026-03-04T14:43:14.314Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15195733",
+      "match": "NK Varaždin vs HNK Gorica",
+      "matchDate": "2026-03-04",
+      "mainMarket": "12",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.5,
+      "secondaryOdd": 1.47,
+      "confidence": 0.693,
+      "safetyScore": 0.7665,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
+    {
+      "id": "pred-1772634553920-b4qrxc",
+      "generatedAt": "2026-03-04T14:29:13.920Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15254179",
+      "match": "Cobresal vs Audax Italiano",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "UNDER 3.5",
+      "mainOdd": 1.5,
+      "secondaryOdd": 1.59,
+      "confidence": 0.7,
+      "safetyScore": 0.7862,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": false,
+      "finalScore": "3-4",
+      "evaluatedAt": "2026-03-04T14:52:39.911Z"
+    },
+    {
+      "id": "pred-1772634553920-d9lwcw",
+      "generatedAt": "2026-03-04T14:29:13.920Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15466200",
+      "match": "Gamba Osaka vs Ratchaburi",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "12",
+      "mainOdd": 1.47,
+      "secondaryOdd": 1.56,
+      "confidence": 0.714,
+      "safetyScore": 0.7998,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": false,
+      "finalScore": "1-1",
+      "evaluatedAt": "2026-03-04T14:52:39.915Z"
+    },
+    {
+      "id": "pred-1772634553920-kjyjfo",
+      "generatedAt": "2026-03-04T14:29:13.920Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15254188",
+      "match": "Academia Puerto Cabello vs Monagas",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "12",
+      "mainOdd": 1.46,
+      "secondaryOdd": 1.61,
+      "confidence": 0.719,
+      "safetyScore": 0.8047,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": true,
+      "finalScore": "5-3",
+      "evaluatedAt": "2026-03-04T14:52:39.919Z"
+    },
+    {
+      "id": "pred-1772633322380-kxo71a",
+      "generatedAt": "2026-03-04T14:08:42.379Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15592862",
+      "match": "Macarthur FC vs Central Coast Mariners",
+      "matchDate": "2026-03-04",
+      "mainMarket": "12",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.58,
+      "secondaryOdd": 1.5,
+      "confidence": 0.658,
+      "safetyScore": 0.74,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": true,
+      "finalScore": "1-3",
+      "evaluatedAt": "2026-03-04T14:08:44.899Z"
+    },
+    {
+      "id": "pred-1772633322379-6p6e8u",
+      "generatedAt": "2026-03-04T14:08:42.379Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15254179",
+      "match": "Cobresal vs Audax Italiano",
+      "matchDate": "2026-03-04",
+      "mainMarket": "UNDER 3.5",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.59,
+      "secondaryOdd": 1.5,
+      "confidence": 0.66,
+      "safetyScore": 0.7321,
+      "status": "loss",
+      "mainHit": false,
+      "secondaryHit": true,
+      "finalScore": "3-4",
+      "evaluatedAt": "2026-03-04T14:08:44.903Z"
+    },
+    {
+      "id": "pred-1772633322379-dll5f8",
+      "generatedAt": "2026-03-04T14:08:42.379Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15466200",
+      "match": "Gamba Osaka vs Ratchaburi",
+      "matchDate": "2026-03-04",
+      "mainMarket": "12",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.56,
+      "secondaryOdd": 1.47,
+      "confidence": 0.665,
+      "safetyScore": 0.7468,
+      "status": "loss",
+      "mainHit": false,
+      "secondaryHit": true,
+      "finalScore": "1-1",
+      "evaluatedAt": "2026-03-04T14:08:44.908Z"
+    },
+    {
+      "id": "pred-1772633322379-wlmx4g",
+      "generatedAt": "2026-03-04T14:08:42.379Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-14068681",
+      "match": "Parma U20 vs Inter U20",
+      "matchDate": "2026-03-04",
+      "mainMarket": "12",
+      "secondaryMarket": "GG",
+      "mainOdd": 1.59,
+      "secondaryOdd": 1.55,
+      "confidence": 0.655,
+      "safetyScore": 0.7168,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
+    {
+      "id": "pred-1772633265780-ejvshf",
+      "generatedAt": "2026-03-04T14:07:45.780Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-14068687",
+      "match": "Frosinone U20 vs Roma U20",
+      "matchDate": "2026-03-04",
+      "mainMarket": "GG",
+      "secondaryMarket": "12",
+      "mainOdd": 1.46,
+      "secondaryOdd": 1.62,
+      "confidence": 0.738,
+      "safetyScore": 0.7744,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
+    {
+      "id": "pred-1772632591452-qgkvfz",
+      "generatedAt": "2026-03-04T13:56:31.452Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-14068685",
+      "match": "Torino U20 vs Cagliari U20",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "12",
+      "mainOdd": 1.37,
+      "secondaryOdd": 1.49,
+      "confidence": 0.767,
+      "safetyScore": 0.8415,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": true,
+      "finalScore": "3-1",
+      "evaluatedAt": "2026-03-04T14:52:39.934Z"
+    },
+    {
+      "id": "pred-1772632591452-jdnmy5",
+      "generatedAt": "2026-03-04T13:56:31.452Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15158654",
+      "match": "LNZ Cherkasy vs Bukovyna Chernivtsi",
+      "matchDate": "2026-03-04",
+      "mainMarket": "12",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.43,
+      "secondaryOdd": 1.39,
+      "confidence": 0.729,
+      "safetyScore": 0.8107,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
+    {
+      "id": "pred-1772632534594-adg63l",
+      "generatedAt": "2026-03-04T13:55:34.594Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15566105",
+      "match": "Manauara EC vs AO Itabaiana",
+      "matchDate": "2026-03-05",
+      "mainMarket": "12",
+      "secondaryMarket": "OVER 1.5",
+      "mainOdd": 1.54,
+      "secondaryOdd": 1.55,
+      "confidence": 0.677,
+      "safetyScore": 0.7468,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
+    {
+      "id": "pred-1772632460683-lxab9f",
+      "generatedAt": "2026-03-04T13:54:20.683Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15466206",
+      "match": "True Bangkok United vs Tampines Rovers",
+      "matchDate": "2026-03-05",
+      "mainMarket": "12",
+      "secondaryMarket": "1X",
+      "mainOdd": 1.4,
+      "secondaryOdd": 1.45,
+      "confidence": 0.741,
+      "safetyScore": 0.802,
+      "status": "pending",
+      "mainHit": null,
+      "secondaryHit": null,
+      "finalScore": null,
+      "evaluatedAt": null
+    },
     {
       "id": "pred-1772631885929-y4cp0z",
       "generatedAt": "2026-03-04T13:44:45.929Z",
@@ -183,36 +443,95 @@
     }
   ],
   "aiLearningState": {
-    "updatedAt": "2026-03-04T13:16:16.183Z",
+    "updatedAt": "2026-03-04T14:52:39.934Z",
     "marketOutcomes": {
       "12": {
-        "win": 2,
-        "total": 2,
-        "hitRate": 0.95
+        "win": 5,
+        "total": 7,
+        "hitRate": 0.714
       },
       "OVER 1.5": {
-        "win": 2,
-        "total": 4,
-        "hitRate": 0.5
+        "win": 9,
+        "total": 11,
+        "hitRate": 0.818
       },
       "UNDER 3.5": {
         "win": 1,
-        "total": 2,
-        "hitRate": 0.5
+        "total": 4,
+        "hitRate": 0.25
       }
     },
-    "swapOutcomes": {}
+    "swapOutcomes": {
+      "12=>OVER 1.5": {
+        "winsIfSwap": 1,
+        "total": 2,
+        "swapRate": 0.5
+      },
+      "UNDER 3.5=>OVER 1.5": {
+        "winsIfSwap": 1,
+        "total": 1,
+        "swapRate": 0.95
+      },
+      "OVER 1.5=>UNDER 3.5": {
+        "winsIfSwap": 0,
+        "total": 1,
+        "swapRate": 0.05
+      },
+      "OVER 1.5=>12": {
+        "winsIfSwap": 0,
+        "total": 3,
+        "swapRate": 0.05
+      }
+    }
   },
   "externalSignalState": {
-    "updatedAt": "2026-03-04T13:50:38.379Z",
+    "updatedAt": "2026-03-04T14:52:55.118Z",
     "byMatch": {
-      "event:sofa-15195733": {
+      "event:sofa-14023983": {
         "source": "sofascore-lineups",
-        "match": "NK Varaždin vs HNK Gorica",
+        "match": "Newcastle United vs Manchester United",
         "matchDate": "2026-03-04",
-        "eventId": "sofa-15195733",
+        "eventId": "sofa-14023983",
         "lineupConfirmed": false,
-        "unavailableHome": 5,
+        "unavailableHome": 7,
+        "unavailableAway": 7,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:55.118Z"
+      },
+      "event:sofa-15492898": {
+        "source": "sofascore-lineups",
+        "match": "Olympique de Marseille vs Toulouse",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15492898",
+        "lineupConfirmed": false,
+        "unavailableHome": 0,
+        "unavailableAway": 3,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:54.798Z"
+      },
+      "event:sofa-15530812": {
+        "source": "sofascore-lineups",
+        "match": "Lazio vs Atalanta",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15530812",
+        "lineupConfirmed": false,
+        "unavailableHome": 6,
         "unavailableAway": 1,
         "suspendedHome": 0,
         "suspendedAway": 0,
@@ -223,7 +542,273 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.379Z"
+        "updatedAt": "2026-03-04T14:52:54.635Z"
+      },
+      "event:sofa-15496190": {
+        "source": "sofascore-lineups",
+        "match": "Real Sociedad vs Athletic Club",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15496190",
+        "lineupConfirmed": false,
+        "unavailableHome": 3,
+        "unavailableAway": 5,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:54.425Z"
+      },
+      "event:sofa-15492900": {
+        "source": "sofascore-lineups",
+        "match": "Lorient vs Nice",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15492900",
+        "lineupConfirmed": false,
+        "unavailableHome": 3,
+        "unavailableAway": 5,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.571Z"
+      },
+      "event:sofa-15380505": {
+        "source": "sofascore-lineups",
+        "match": "Hamburger SV vs Bayer 04 Leverkusen",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15380505",
+        "lineupConfirmed": false,
+        "unavailableHome": 1,
+        "unavailableAway": 3,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.549Z"
+      },
+      "event:sofa-14023984": {
+        "source": "sofascore-lineups",
+        "match": "Manchester City vs Nottingham Forest",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-14023984",
+        "lineupConfirmed": false,
+        "unavailableHome": 5,
+        "unavailableAway": 5,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.538Z"
+      },
+      "event:sofa-14023947": {
+        "source": "sofascore-lineups",
+        "match": "Fulham vs West Ham United",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-14023947",
+        "lineupConfirmed": false,
+        "unavailableHome": 4,
+        "unavailableAway": 3,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.527Z"
+      },
+      "event:sofa-14023933": {
+        "source": "sofascore-lineups",
+        "match": "Brighton & Hove Albion vs Arsenal",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-14023933",
+        "lineupConfirmed": false,
+        "unavailableHome": 3,
+        "unavailableAway": 5,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.515Z"
+      },
+      "event:sofa-14023986": {
+        "source": "sofascore-lineups",
+        "match": "Aston Villa vs Chelsea",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-14023986",
+        "lineupConfirmed": false,
+        "unavailableHome": 5,
+        "unavailableAway": 8,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:52.504Z"
+      },
+      "event:sofa-15195731": {
+        "source": "sofascore-lineups",
+        "match": "HNK Rijeka vs HNK Hajduk Split",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15195731",
+        "lineupConfirmed": false,
+        "unavailableHome": 3,
+        "unavailableAway": 6,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:51.467Z"
+      },
+      "event:sofa-15501118": {
+        "source": "sofascore-lineups",
+        "match": "AZ Alkmaar vs SC Telstar",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15501118",
+        "lineupConfirmed": false,
+        "unavailableHome": 4,
+        "unavailableAway": 3,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:51.326Z"
+      },
+      "event:sofa-15534915": {
+        "source": "sofascore-lineups",
+        "match": "Rayo Vallecano vs Real Oviedo",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15534915",
+        "lineupConfirmed": false,
+        "unavailableHome": 1,
+        "unavailableAway": 5,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:48.857Z"
+      },
+      "event:sofa-15195730": {
+        "source": "sofascore-lineups",
+        "match": "GNK Dinamo Zagreb vs NK Kurilovec Velika Gorica",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15195730",
+        "lineupConfirmed": false,
+        "unavailableHome": 5,
+        "unavailableAway": 3,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:46.278Z"
+      },
+      "event:sofa-15195733": {
+        "source": "sofascore-lineups",
+        "match": "NK Varaždin vs HNK Gorica",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15195733",
+        "lineupConfirmed": true,
+        "unavailableHome": 3,
+        "unavailableAway": 1,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:45.227Z"
+      },
+      "event:sofa-15161042": {
+        "source": "sofascore-lineups",
+        "match": "Krylya Sovetov Samara vs Orenburg",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15161042",
+        "lineupConfirmed": true,
+        "unavailableHome": 0,
+        "unavailableAway": 0,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:45.033Z"
+      },
+      "event:sofa-15163609": {
+        "source": "sofascore-lineups",
+        "match": "FC Rostov vs Dinamo Makhachkala",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15163609",
+        "lineupConfirmed": true,
+        "unavailableHome": 0,
+        "unavailableAway": 0,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:44.869Z"
       },
       "event:sofa-15604905": {
         "source": "sofascore-lineups",
@@ -242,7 +827,26 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.281Z"
+        "updatedAt": "2026-03-04T14:52:44.326Z"
+      },
+      "event:sofa-15186217": {
+        "source": "sofascore-lineups",
+        "match": "Jadran Dekani vs Kalcer Radomlje",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15186217",
+        "lineupConfirmed": true,
+        "unavailableHome": 0,
+        "unavailableAway": 0,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:52:44.284Z"
       },
       "event:sofa-14214970": {
         "source": "sofascore-lineups",
@@ -261,7 +865,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.251Z"
+        "updatedAt": "2026-03-04T14:52:44.271Z"
       },
       "event:sofa-14598653": {
         "source": "sofascore-lineups",
@@ -280,7 +884,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.242Z"
+        "updatedAt": "2026-03-04T14:52:44.185Z"
       },
       "event:sofa-15158654": {
         "source": "sofascore-lineups",
@@ -299,7 +903,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.230Z"
+        "updatedAt": "2026-03-04T14:52:44.174Z"
       },
       "event:sofa-14068685": {
         "source": "sofascore-lineups",
@@ -318,7 +922,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.090Z"
+        "updatedAt": "2026-03-04T14:52:44.010Z"
       },
       "event:sofa-14068687": {
         "source": "sofascore-lineups",
@@ -337,7 +941,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.067Z"
+        "updatedAt": "2026-03-04T14:52:43.999Z"
       },
       "event:sofa-15479162": {
         "source": "sofascore-lineups",
@@ -356,7 +960,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:38.028Z"
+        "updatedAt": "2026-03-04T14:52:43.970Z"
       },
       "event:sofa-15604907": {
         "source": "sofascore-lineups",
@@ -375,7 +979,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.989Z"
+        "updatedAt": "2026-03-04T14:52:43.956Z"
       },
       "event:sofa-15187143": {
         "source": "sofascore-lineups",
@@ -394,7 +998,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.948Z"
+        "updatedAt": "2026-03-04T14:52:43.945Z"
       },
       "event:sofa-14068691": {
         "source": "sofascore-lineups",
@@ -413,7 +1017,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.936Z"
+        "updatedAt": "2026-03-04T14:52:43.924Z"
       },
       "event:sofa-14326662": {
         "source": "sofascore-lineups",
@@ -432,7 +1036,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.911Z"
+        "updatedAt": "2026-03-04T14:52:43.912Z"
       },
       "event:sofa-15466200": {
         "source": "sofascore-lineups",
@@ -451,7 +1055,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.885Z"
+        "updatedAt": "2026-03-04T14:52:43.893Z"
       },
       "event:sofa-15479148": {
         "source": "sofascore-lineups",
@@ -470,7 +1074,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.868Z"
+        "updatedAt": "2026-03-04T14:52:43.880Z"
       },
       "event:sofa-15570134": {
         "source": "sofascore-lineups",
@@ -489,7 +1093,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.850Z"
+        "updatedAt": "2026-03-04T14:52:43.866Z"
       },
       "event:sofa-15592862": {
         "source": "sofascore-lineups",
@@ -508,7 +1112,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.838Z"
+        "updatedAt": "2026-03-04T14:52:43.854Z"
       },
       "event:sofa-14326661": {
         "source": "sofascore-lineups",
@@ -527,7 +1131,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.707Z"
+        "updatedAt": "2026-03-04T14:52:43.734Z"
       },
       "event:sofa-15238969": {
         "source": "sofascore-lineups",
@@ -546,7 +1150,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.696Z"
+        "updatedAt": "2026-03-04T14:52:43.723Z"
       },
       "event:sofa-15238967": {
         "source": "sofascore-lineups",
@@ -565,7 +1169,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.519Z"
+        "updatedAt": "2026-03-04T14:52:43.701Z"
       },
       "event:sofa-15336009": {
         "source": "sofascore-lineups",
@@ -584,7 +1188,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.507Z"
+        "updatedAt": "2026-03-04T14:52:43.687Z"
       },
       "event:sofa-15188431": {
         "source": "sofascore-lineups",
@@ -603,7 +1207,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.489Z"
+        "updatedAt": "2026-03-04T14:52:43.674Z"
       },
       "event:sofa-15254184": {
         "source": "sofascore-lineups",
@@ -622,7 +1226,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.478Z"
+        "updatedAt": "2026-03-04T14:52:43.659Z"
       },
       "event:sofa-15238966": {
         "source": "sofascore-lineups",
@@ -641,7 +1245,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.466Z"
+        "updatedAt": "2026-03-04T14:52:43.638Z"
       },
       "event:sofa-15238965": {
         "source": "sofascore-lineups",
@@ -660,7 +1264,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.444Z"
+        "updatedAt": "2026-03-04T14:52:43.613Z"
       },
       "event:sofa-15566102": {
         "source": "sofascore-lineups",
@@ -679,7 +1283,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.431Z"
+        "updatedAt": "2026-03-04T14:52:43.594Z"
       },
       "event:sofa-15254179": {
         "source": "sofascore-lineups",
@@ -698,7 +1302,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.420Z"
+        "updatedAt": "2026-03-04T14:52:43.569Z"
       },
       "event:sofa-15254188": {
         "source": "sofascore-lineups",
@@ -717,7 +1321,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.368Z"
+        "updatedAt": "2026-03-04T14:52:43.545Z"
       },
       "event:sofa-15253536": {
         "source": "sofascore-lineups",
@@ -736,7 +1340,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.346Z"
+        "updatedAt": "2026-03-04T14:52:43.523Z"
       },
       "event:sofa-15269956": {
         "source": "sofascore-lineups",
@@ -755,8 +1359,1617 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:50:37.334Z"
+        "updatedAt": "2026-03-04T14:52:43.509Z"
+      },
+      "event:sofa-14068681": {
+        "source": "sofascore-lineups",
+        "match": "Parma U20 vs Inter U20",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-14068681",
+        "lineupConfirmed": true,
+        "unavailableHome": 0,
+        "unavailableAway": 0,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T14:41:07.713Z"
       }
     }
+  },
+  "featureStoreState": {
+    "updatedAt": "2026-03-04T14:53:09.783Z",
+    "versions": [
+      {
+        "id": "fs-1772635989783",
+        "createdAt": "2026-03-04T14:53:09.783Z",
+        "meta": {
+          "source": "daily-auto-training",
+          "accepted": 155,
+          "rejected": 5,
+          "backtestAccuracy": 0.7905
+        },
+        "count": 20,
+        "features": [
+          {
+            "matchId": "sofa-15530812",
+            "match": "Lazio vs Atalanta",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T20:00:00.000Z",
+            "lineupState": "ANNOUNCED",
+            "market": "OVER 1.5",
+            "odd": 1.47,
+            "confidence": 0.713,
+            "safetyScore": 0.7787,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317739",
+            "match": "Palermo vs Mantova",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.47,
+            "confidence": 0.715,
+            "safetyScore": 0.7924,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317733",
+            "match": "Frosinone vs Pescara",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.706,
+            "safetyScore": 0.7836,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317728",
+            "match": "Carrarese vs Catanzaro",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T18:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.46,
+            "confidence": 0.715,
+            "safetyScore": 0.7731,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317737",
+            "match": "Juve Stabia vs Sampdoria",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.685,
+            "safetyScore": 0.7631,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317734",
+            "match": "Bari vs Empoli",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.55,
+            "confidence": 0.678,
+            "safetyScore": 0.7563,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068687",
+            "match": "Frosinone U20 vs Roma U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T13:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "GG",
+            "odd": 1.47,
+            "confidence": 0.736,
+            "safetyScore": 0.7699,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068685",
+            "match": "Torino U20 vs Cagliari U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T13:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "12",
+            "odd": 1.47,
+            "confidence": 0.708,
+            "safetyScore": 0.7865,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303160",
+            "match": "Gubbio vs Carpi",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.705,
+            "safetyScore": 0.7826,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303161",
+            "match": "US Livorno 1915 vs Perugia",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.5,
+            "confidence": 0.702,
+            "safetyScore": 0.7797,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303167",
+            "match": "Torres vs Guidonia Montecelio 1937",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.703,
+            "safetyScore": 0.7806,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303162",
+            "match": "Pineto vs Forlì",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.687,
+            "safetyScore": 0.7651,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303166",
+            "match": "Sambenedettese vs Ascoli",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T20:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.686,
+            "safetyScore": 0.7641,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068691",
+            "match": "Lazio U20 vs Lecce U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T11:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "12",
+            "odd": 1.57,
+            "confidence": 0.664,
+            "safetyScore": 0.7437,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303168",
+            "match": "Vis Pesaro vs Bra",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.51,
+            "confidence": 0.691,
+            "safetyScore": 0.7497,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303163",
+            "match": "Pontedera vs Juventus Next Gen U23",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.58,
+            "confidence": 0.666,
+            "safetyScore": 0.7446,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303164",
+            "match": "Ravenna vs Pianese",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.56,
+            "confidence": 0.667,
+            "safetyScore": 0.7263,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068689",
+            "match": "Fiorentina U20 vs Bologna U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.56,
+            "confidence": 0.666,
+            "safetyScore": 0.7253,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303159",
+            "match": "Arezzo vs Ternana",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.59,
+            "confidence": 0.653,
+            "safetyScore": 0.7126,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-15254188",
+            "match": "Academia Puerto Cabello vs Monagas",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T00:30:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "OVER 1.5",
+            "odd": 1.46,
+            "confidence": 0.719,
+            "safetyScore": 0.8166,
+            "qualityScore": 0,
+            "source": "sofascore"
+          }
+        ]
+      },
+      {
+        "id": "fs-1772635980846",
+        "createdAt": "2026-03-04T14:53:00.846Z",
+        "meta": {
+          "source": "daily-auto-training",
+          "accepted": 155,
+          "rejected": 5,
+          "backtestAccuracy": 0.7905
+        },
+        "count": 20,
+        "features": [
+          {
+            "matchId": "sofa-15530812",
+            "match": "Lazio vs Atalanta",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T20:00:00.000Z",
+            "lineupState": "ANNOUNCED",
+            "market": "OVER 1.5",
+            "odd": 1.47,
+            "confidence": 0.713,
+            "safetyScore": 0.7787,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317739",
+            "match": "Palermo vs Mantova",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.47,
+            "confidence": 0.715,
+            "safetyScore": 0.7924,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317733",
+            "match": "Frosinone vs Pescara",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.706,
+            "safetyScore": 0.7836,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317728",
+            "match": "Carrarese vs Catanzaro",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T18:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.46,
+            "confidence": 0.715,
+            "safetyScore": 0.7731,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317737",
+            "match": "Juve Stabia vs Sampdoria",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.685,
+            "safetyScore": 0.7631,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14317734",
+            "match": "Bari vs Empoli",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.55,
+            "confidence": 0.678,
+            "safetyScore": 0.7563,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068687",
+            "match": "Frosinone U20 vs Roma U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T13:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "GG",
+            "odd": 1.47,
+            "confidence": 0.736,
+            "safetyScore": 0.7699,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068685",
+            "match": "Torino U20 vs Cagliari U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T13:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "12",
+            "odd": 1.47,
+            "confidence": 0.708,
+            "safetyScore": 0.7865,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303160",
+            "match": "Gubbio vs Carpi",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.705,
+            "safetyScore": 0.7826,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303161",
+            "match": "US Livorno 1915 vs Perugia",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.5,
+            "confidence": 0.702,
+            "safetyScore": 0.7797,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303167",
+            "match": "Torres vs Guidonia Montecelio 1937",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.49,
+            "confidence": 0.703,
+            "safetyScore": 0.7806,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303162",
+            "match": "Pineto vs Forlì",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.687,
+            "safetyScore": 0.7651,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303166",
+            "match": "Sambenedettese vs Ascoli",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T20:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.53,
+            "confidence": 0.686,
+            "safetyScore": 0.7641,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068691",
+            "match": "Lazio U20 vs Lecce U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T11:00:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "12",
+            "odd": 1.57,
+            "confidence": 0.664,
+            "safetyScore": 0.7437,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303168",
+            "match": "Vis Pesaro vs Bra",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.51,
+            "confidence": 0.691,
+            "safetyScore": 0.7497,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303163",
+            "match": "Pontedera vs Juventus Next Gen U23",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "OVER 1.5",
+            "odd": 1.58,
+            "confidence": 0.666,
+            "safetyScore": 0.7446,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303164",
+            "match": "Ravenna vs Pianese",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.56,
+            "confidence": 0.667,
+            "safetyScore": 0.7263,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14068689",
+            "match": "Fiorentina U20 vs Bologna U20",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T17:00:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.56,
+            "confidence": 0.666,
+            "safetyScore": 0.7253,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-14303159",
+            "match": "Arezzo vs Ternana",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T19:30:00.000Z",
+            "lineupState": "PREDICTED",
+            "market": "12",
+            "odd": 1.59,
+            "confidence": 0.653,
+            "safetyScore": 0.7126,
+            "qualityScore": 0,
+            "source": "sofascore"
+          },
+          {
+            "matchId": "sofa-15254188",
+            "match": "Academia Puerto Cabello vs Monagas",
+            "matchDate": "2026-03-04",
+            "kickoffUtc": "2026-03-04T00:30:00.000Z",
+            "lineupState": "LOCKED",
+            "market": "OVER 1.5",
+            "odd": 1.46,
+            "confidence": 0.719,
+            "safetyScore": 0.8166,
+            "qualityScore": 0,
+            "source": "sofascore"
+          }
+        ]
+      }
+    ]
+  },
+  "calibrationState": {
+    "updatedAt": "2026-03-04T14:53:08.629Z",
+    "bins": [
+      {
+        "from": 0.3,
+        "to": 0.4,
+        "sample": 0,
+        "observed": null
+      },
+      {
+        "from": 0.4,
+        "to": 0.5,
+        "sample": 0,
+        "observed": null
+      },
+      {
+        "from": 0.5,
+        "to": 0.6,
+        "sample": 0,
+        "observed": null
+      },
+      {
+        "from": 0.6,
+        "to": 0.7,
+        "sample": 3,
+        "observed": 0.3333
+      },
+      {
+        "from": 0.7,
+        "to": 0.8,
+        "sample": 8,
+        "observed": 0.75
+      },
+      {
+        "from": 0.8,
+        "to": 0.9,
+        "sample": 0,
+        "observed": null
+      },
+      {
+        "from": 0.9,
+        "to": 1,
+        "sample": 0,
+        "observed": null
+      },
+      {
+        "from": 1,
+        "to": 1.1,
+        "sample": 0,
+        "observed": null
+      }
+    ]
+  },
+  "monitoringState": {
+    "updatedAt": "2026-03-04T14:53:09.772Z",
+    "ingestion": {
+      "lastRunAt": "2026-03-04T14:53:09.772Z",
+      "status": "ok",
+      "sources": {
+        "footballData": {
+          "source": "football-data.co.uk",
+          "season": "2526",
+          "rowsUsed": 1241
+        },
+        "openfootball": {
+          "source": "openfootball",
+          "season": "2025-26",
+          "matches": 0
+        }
+      }
+    },
+    "mapping": {
+      "lastRunAt": "2026-03-04T14:53:09.772Z",
+      "acceptedRate": 0.9688,
+      "rejectedRate": 0.0313
+    },
+    "drift": {
+      "lastRunAt": "2026-03-04T14:53:09.772Z",
+      "baselineAccuracy": 0.7905,
+      "latestAccuracy": 0.7905,
+      "delta": 0
+    },
+    "alerts": [
+      {
+        "id": "alert-1772635941415-6kzm6",
+        "createdAt": "2026-03-04T14:52:21.415Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635941414-6gp64",
+        "createdAt": "2026-03-04T14:52:21.414Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635940457-vc649",
+        "createdAt": "2026-03-04T14:52:20.457Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938876-1evig",
+        "createdAt": "2026-03-04T14:52:18.876Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938876-8k6r3",
+        "createdAt": "2026-03-04T14:52:18.876Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938875-puxpm",
+        "createdAt": "2026-03-04T14:52:18.875Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938875-l1w40",
+        "createdAt": "2026-03-04T14:52:18.875Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938874-2l0uz",
+        "createdAt": "2026-03-04T14:52:18.874Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938308-f8zia",
+        "createdAt": "2026-03-04T14:52:18.308Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938307-g19wd",
+        "createdAt": "2026-03-04T14:52:18.307Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635938307-8n60v",
+        "createdAt": "2026-03-04T14:52:18.307Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936534-jhyfs",
+        "createdAt": "2026-03-04T14:52:16.534Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936534-maep2",
+        "createdAt": "2026-03-04T14:52:16.534Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936058-pom86",
+        "createdAt": "2026-03-04T14:52:16.058Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936055-ywfuw",
+        "createdAt": "2026-03-04T14:52:16.055Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936050-fwnm1",
+        "createdAt": "2026-03-04T14:52:16.050Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936045-500im",
+        "createdAt": "2026-03-04T14:52:16.045Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936045-il8wm",
+        "createdAt": "2026-03-04T14:52:16.045Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936038-syu0e",
+        "createdAt": "2026-03-04T14:52:16.038Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936037-m3wye",
+        "createdAt": "2026-03-04T14:52:16.037Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936037-30gry",
+        "createdAt": "2026-03-04T14:52:16.037Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936027-h8bi7",
+        "createdAt": "2026-03-04T14:52:16.027Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635936026-hdzyp",
+        "createdAt": "2026-03-04T14:52:16.026Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935544-eq1cz",
+        "createdAt": "2026-03-04T14:52:15.544Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935544-d3ioi",
+        "createdAt": "2026-03-04T14:52:15.544Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935541-69ecm",
+        "createdAt": "2026-03-04T14:52:15.541Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935541-6brqy",
+        "createdAt": "2026-03-04T14:52:15.541Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935537-pdosa",
+        "createdAt": "2026-03-04T14:52:15.537Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935536-q6vh4",
+        "createdAt": "2026-03-04T14:52:15.536Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935531-oa987",
+        "createdAt": "2026-03-04T14:52:15.531Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935530-fgm5w",
+        "createdAt": "2026-03-04T14:52:15.530Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935530-m939z",
+        "createdAt": "2026-03-04T14:52:15.530Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635935001-oozr6",
+        "createdAt": "2026-03-04T14:52:15.001Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635934414-8c2a6",
+        "createdAt": "2026-03-04T14:52:14.414Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913781-1i19x",
+        "createdAt": "2026-03-04T14:51:53.781Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913781-u1nv4",
+        "createdAt": "2026-03-04T14:51:53.781Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913780-g5xnw",
+        "createdAt": "2026-03-04T14:51:53.780Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913780-i4un6",
+        "createdAt": "2026-03-04T14:51:53.780Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913779-n3tfc",
+        "createdAt": "2026-03-04T14:51:53.779Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635913779-n8o3h",
+        "createdAt": "2026-03-04T14:51:53.779Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911346-7usxq",
+        "createdAt": "2026-03-04T14:51:51.346Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911346-0a83o",
+        "createdAt": "2026-03-04T14:51:51.346Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911346-1sbx0",
+        "createdAt": "2026-03-04T14:51:51.346Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911345-4ckr1",
+        "createdAt": "2026-03-04T14:51:51.345Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911345-w698t",
+        "createdAt": "2026-03-04T14:51:51.345Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911345-2pxqb",
+        "createdAt": "2026-03-04T14:51:51.345Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911344-63fdt",
+        "createdAt": "2026-03-04T14:51:51.344Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911343-wjjhv",
+        "createdAt": "2026-03-04T14:51:51.343Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911076-n6cu5",
+        "createdAt": "2026-03-04T14:51:51.076Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911075-qa976",
+        "createdAt": "2026-03-04T14:51:51.075Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911074-nvdkr",
+        "createdAt": "2026-03-04T14:51:51.074Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911074-2a2ey",
+        "createdAt": "2026-03-04T14:51:51.074Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911073-9hdcj",
+        "createdAt": "2026-03-04T14:51:51.073Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911073-cbaru",
+        "createdAt": "2026-03-04T14:51:51.073Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911072-mv426",
+        "createdAt": "2026-03-04T14:51:51.072Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911072-nngy6",
+        "createdAt": "2026-03-04T14:51:51.072Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911071-408cm",
+        "createdAt": "2026-03-04T14:51:51.071Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911071-hd4e9",
+        "createdAt": "2026-03-04T14:51:51.071Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911070-ef7zk",
+        "createdAt": "2026-03-04T14:51:51.070Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911070-lspd0",
+        "createdAt": "2026-03-04T14:51:51.070Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911069-134tq",
+        "createdAt": "2026-03-04T14:51:51.069Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635911069-hhd2c",
+        "createdAt": "2026-03-04T14:51:51.069Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910683-u308d",
+        "createdAt": "2026-03-04T14:51:50.683Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910683-b2y4e",
+        "createdAt": "2026-03-04T14:51:50.683Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910682-2bp4x",
+        "createdAt": "2026-03-04T14:51:50.682Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910682-2itzb",
+        "createdAt": "2026-03-04T14:51:50.682Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910081-xht7z",
+        "createdAt": "2026-03-04T14:51:50.081Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910080-7m0rg",
+        "createdAt": "2026-03-04T14:51:50.080Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910080-t9zwv",
+        "createdAt": "2026-03-04T14:51:50.080Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910079-ftxoc",
+        "createdAt": "2026-03-04T14:51:50.079Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910079-nvxx2",
+        "createdAt": "2026-03-04T14:51:50.079Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910078-xk1si",
+        "createdAt": "2026-03-04T14:51:50.078Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910078-479q6",
+        "createdAt": "2026-03-04T14:51:50.078Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910078-l62zl",
+        "createdAt": "2026-03-04T14:51:50.078Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910077-sguvf",
+        "createdAt": "2026-03-04T14:51:50.077Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910077-43jr9",
+        "createdAt": "2026-03-04T14:51:50.077Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910076-01q4u",
+        "createdAt": "2026-03-04T14:51:50.076Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910076-x4czw",
+        "createdAt": "2026-03-04T14:51:50.076Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910075-afl58",
+        "createdAt": "2026-03-04T14:51:50.075Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910075-d9rk1",
+        "createdAt": "2026-03-04T14:51:50.075Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910074-1rept",
+        "createdAt": "2026-03-04T14:51:50.074Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910074-82a5m",
+        "createdAt": "2026-03-04T14:51:50.074Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910073-o855q",
+        "createdAt": "2026-03-04T14:51:50.073Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910073-0hn3i",
+        "createdAt": "2026-03-04T14:51:50.073Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910072-r325c",
+        "createdAt": "2026-03-04T14:51:50.072Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635910072-gb8ib",
+        "createdAt": "2026-03-04T14:51:50.072Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909606-rghpa",
+        "createdAt": "2026-03-04T14:51:49.606Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909606-39yu7",
+        "createdAt": "2026-03-04T14:51:49.606Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909605-8i4e2",
+        "createdAt": "2026-03-04T14:51:49.605Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909605-vwwib",
+        "createdAt": "2026-03-04T14:51:49.605Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909604-uatqv",
+        "createdAt": "2026-03-04T14:51:49.604Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909604-ohl00",
+        "createdAt": "2026-03-04T14:51:49.604Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909603-jirfs",
+        "createdAt": "2026-03-04T14:51:49.603Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909603-tzat7",
+        "createdAt": "2026-03-04T14:51:49.603Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909602-wgqp7",
+        "createdAt": "2026-03-04T14:51:49.602Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909088-xrprh",
+        "createdAt": "2026-03-04T14:51:49.088Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909088-0b8uf",
+        "createdAt": "2026-03-04T14:51:49.088Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635909087-udmtu",
+        "createdAt": "2026-03-04T14:51:49.087Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891299-6gi3z",
+        "createdAt": "2026-03-04T14:51:31.299Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891299-n4gbg",
+        "createdAt": "2026-03-04T14:51:31.299Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891298-59yyt",
+        "createdAt": "2026-03-04T14:51:31.298Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891298-o37d2",
+        "createdAt": "2026-03-04T14:51:31.298Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891297-6bxy0",
+        "createdAt": "2026-03-04T14:51:31.297Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891296-paxa2",
+        "createdAt": "2026-03-04T14:51:31.296Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891296-j3ot1",
+        "createdAt": "2026-03-04T14:51:31.296Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      },
+      {
+        "id": "alert-1772635891295-k56qt",
+        "createdAt": "2026-03-04T14:51:31.295Z",
+        "type": "ingestion",
+        "message": "Errore nel daily auto training",
+        "detail": {
+          "detail": "fetch failed"
+        }
+      }
+    ]
   }
 }

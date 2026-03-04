@@ -4,6 +4,8 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -47,9 +49,74 @@ const QUALITY_CONFIG = {
   minMainConfidence: 0.56,
   minMainOdd: 1.35,
   maxPicksPerCoupon: 3,
-  abstainQualityQuantile: 0.72
+  abstainQualityQuantile: 0.72,
+  marketDrawdownWindow: 25,
+  marketDrawdownMinAccuracy: 0.48,
+  marketDrawdownMinDecided: 8
+};
+const DATA_QUALITY_CONFIG = {
+  maxSameTeamsPerWeek: 1,
+  requireMatchDate: true,
+  allowWithoutRound: false,
+  lockWindowMinutes: 60
 };
 const MAX_EXTERNAL_SIGNALS = 50000;
+const qualityAuditLog = [];
+const MAX_QUALITY_AUDIT = 500;
+const TRAINING_CONFIG = {
+  autoEnabled: true,
+  intervalHours: 24,
+  autoIntervalMs: 24 * 60 * 60 * 1000,
+  lookbackDays: 45,
+  backtestDays: 21,
+  backtestMaxPerDay: 10,
+  scope: "all"
+};
+const TRAINING_POLICY = {
+  resolverMismatchRateWarn: 0.22,
+  resolverMismatchRateFail: 0.45,
+  maxCriticalAlertsBeforeFail: 2,
+  logLossDegradationPctBlock: 12,
+  overfitDeltaBlock: 0.09
+};
+const featureStoreState = {
+  updatedAt: null,
+  versions: []
+};
+const MAX_FEATURE_VERSIONS = 120;
+const dailyTrainingState = {
+  updatedAt: null,
+  activeModelVersion: null,
+  activeFeatureVersion: null,
+  lastJobId: null,
+  jobs: []
+};
+const MAX_DAILY_TRAINING_REPORTS = 400;
+const calibrationState = {
+  updatedAt: null,
+  bins: []
+};
+const monitoringState = {
+  updatedAt: null,
+  ingestion: {
+    lastRunAt: null,
+    status: "idle",
+    sources: {}
+  },
+  mapping: {
+    lastRunAt: null,
+    acceptedRate: null,
+    rejectedRate: null
+  },
+  drift: {
+    lastRunAt: null,
+    baselineAccuracy: null,
+    latestAccuracy: null,
+    delta: null
+  },
+  alerts: []
+};
+const MAX_MONITOR_ALERTS = 300;
 
 const MARKET_UNIVERSE = {
   esito: [
@@ -176,6 +243,499 @@ function normalizeWhitespace(value) {
 
 function normalizeSearchText(value) {
   return normalizeWhitespace(String(value || "")).toLowerCase();
+}
+
+function parseMatchTeams(matchLabel) {
+  const raw = String(matchLabel || "");
+  const [homeRaw = "", awayRaw = ""] = raw.split(/\s+vs\s+/i);
+  return {
+    home: normalizeSearchText(homeRaw),
+    away: normalizeSearchText(awayRaw)
+  };
+}
+
+function parseRoundNumber(matchdayLabel) {
+  const match = String(matchdayLabel || "").match(/(\d{1,2})/);
+  if (!match) {
+    return null;
+  }
+  const round = Number(match[1]);
+  return Number.isFinite(round) ? round : null;
+}
+
+function isoWeekToken(dateValue) {
+  if (!dateValue) {
+    return "WEEK_ND";
+  }
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return "WEEK_ND";
+  }
+
+  const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
+  return `${utc.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function lineupStateForMatch(signal, kickoffDate, nowDate = new Date()) {
+  if (!signal) {
+    return "PREDICTED";
+  }
+
+  if (signal.lineupConfirmed !== true) {
+    return "ANNOUNCED";
+  }
+
+  if (!kickoffDate) {
+    return "CONFIRMED";
+  }
+
+  const kickoff = new Date(kickoffDate);
+  if (Number.isNaN(kickoff.getTime())) {
+    return "CONFIRMED";
+  }
+
+  const diffMinutes = (kickoff.getTime() - nowDate.getTime()) / 60000;
+  if (diffMinutes <= DATA_QUALITY_CONFIG.lockWindowMinutes) {
+    return "LOCKED";
+  }
+
+  return "CONFIRMED";
+}
+
+function canonicalMatchId(match) {
+  if (match?.id) {
+    return String(match.id);
+  }
+
+  const teams = parseMatchTeams(match?.match || "");
+  const date = String(match?.matchDate || "ND").slice(0, 10);
+  const round = parseRoundNumber(match?.matchday) || "RND";
+  const tournament = normalizeSearchText(match?.tournament || "tour");
+  return `${tournament}|${date}|${round}|${teams.home}|${teams.away}`;
+}
+
+function matchKickoffUtc(match) {
+  if (!match?.matchDate) {
+    return null;
+  }
+  const kickoff = match.kickoff ? String(match.kickoff) : "12:00";
+  const dateStr = String(match.matchDate).slice(0, 10);
+  const iso = `${dateStr}T${kickoff.length === 5 ? kickoff : "12:00"}:00Z`;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
+}
+
+function validateMatchRecord(match, context) {
+  const reasons = [];
+  const kickoffUtc = matchKickoffUtc(match);
+  const round = parseRoundNumber(match.matchday);
+
+  if (DATA_QUALITY_CONFIG.requireMatchDate && !match?.matchDate) {
+    reasons.push("missing_match_date");
+  }
+
+  if (!kickoffUtc) {
+    reasons.push("missing_kickoff_utc");
+  }
+
+  if (!round && !DATA_QUALITY_CONFIG.allowWithoutRound) {
+    reasons.push("missing_round");
+  }
+
+  const week = isoWeekToken(match.matchDate);
+  const teams = parseMatchTeams(match.match || "");
+  const pairToken = `${teams.home}|${teams.away}|${week}`;
+
+  if (context.pairSeen.get(pairToken) >= DATA_QUALITY_CONFIG.maxSameTeamsPerWeek) {
+    reasons.push("duplicate_pair_same_week");
+  }
+
+  const valid = reasons.length === 0;
+  if (valid) {
+    context.pairSeen.set(pairToken, (context.pairSeen.get(pairToken) || 0) + 1);
+  }
+
+  const signal =
+    match.externalSignal ||
+    getExternalSignalForMatch(match.match, match.matchDate, match.id) ||
+    null;
+  const lineupState = lineupStateForMatch(signal, kickoffUtc ? new Date(kickoffUtc) : null);
+
+  return {
+    valid,
+    reasons,
+    normalized: {
+      ...match,
+      canonicalId: canonicalMatchId(match),
+      kickoffUtc,
+      round,
+      week,
+      lineupState,
+      externalSignal: signal
+    }
+  };
+}
+
+function applyDataQualityGate(matches, meta = {}) {
+  const pairSeen = new Map();
+  const accepted = [];
+  const rejected = [];
+
+  for (const item of matches || []) {
+    const result = validateMatchRecord(item, { pairSeen, meta });
+    if (result.valid) {
+      accepted.push(result.normalized);
+    } else {
+      rejected.push({
+        match: item.match,
+        id: item.id,
+        reasons: result.reasons,
+        matchDate: item.matchDate || null,
+        matchday: item.matchday || null
+      });
+    }
+  }
+
+  const audit = {
+    createdAt: new Date().toISOString(),
+    input: (matches || []).length,
+    accepted: accepted.length,
+    rejected: rejected.length,
+    rejectedItems: rejected.slice(0, 100)
+  };
+
+  qualityAuditLog.unshift(audit);
+  if (qualityAuditLog.length > MAX_QUALITY_AUDIT) {
+    qualityAuditLog.splice(MAX_QUALITY_AUDIT);
+  }
+
+  return {
+    accepted,
+    rejected,
+    audit
+  };
+}
+
+function pushMonitorAlert(type, message, detail = {}, severity = "warn", code = "GENERIC") {
+  monitoringState.alerts.unshift({
+    id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    createdAt: new Date().toISOString(),
+    type,
+    severity,
+    code,
+    message,
+    detail
+  });
+  if (monitoringState.alerts.length > MAX_MONITOR_ALERTS) {
+    monitoringState.alerts.splice(MAX_MONITOR_ALERTS);
+  }
+}
+
+function safeGitCommitHash() {
+  if (process.env.GIT_COMMIT_HASH) {
+    return String(process.env.GIT_COMMIT_HASH);
+  }
+  try {
+    return String(execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }))
+      .trim()
+      .slice(0, 40);
+  } catch {
+    return "unknown";
+  }
+}
+
+function modelVersionToken(nowDate = new Date()) {
+  const yyyy = String(nowDate.getUTCFullYear());
+  const mm = String(nowDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(nowDate.getUTCDate()).padStart(2, "0");
+  const hh = String(nowDate.getUTCHours()).padStart(2, "0");
+  const min = String(nowDate.getUTCMinutes()).padStart(2, "0");
+  return `model_${yyyy}${mm}${dd}_${hh}${min}`;
+}
+
+function aucFromBinaryScores(rows) {
+  const positives = rows.filter((row) => row.y === 1);
+  const negatives = rows.filter((row) => row.y === 0);
+  if (!positives.length || !negatives.length) {
+    return null;
+  }
+
+  const sorted = [...rows].sort((a, b) => b.p - a.p);
+  let rank = 1;
+  let sumPosRanks = 0;
+  for (const row of sorted) {
+    if (row.y === 1) {
+      sumPosRanks += rank;
+    }
+    rank += 1;
+  }
+
+  const nPos = positives.length;
+  const nNeg = negatives.length;
+  const auc = (sumPosRanks - (nPos * (nPos + 1)) / 2) / (nPos * nNeg);
+  return Number(clamp(auc, 0, 1).toFixed(4));
+}
+
+function metricsFromPicks(picks = []) {
+  const rows = (picks || [])
+    .filter((row) => typeof row.hit === "boolean")
+    .map((row) => ({
+      y: row.hit ? 1 : 0,
+      p: clamp(Number(row.confidence || 0.5), 0.01, 0.99)
+    }));
+
+  if (!rows.length) {
+    return {
+      logLoss: null,
+      brierScore: null,
+      auc: null,
+      ece: null
+    };
+  }
+
+  const logLoss = rows.reduce((acc, row) => {
+    const p = row.p;
+    return acc - (row.y * Math.log(p) + (1 - row.y) * Math.log(1 - p));
+  }, 0) / rows.length;
+
+  const brier = rows.reduce((acc, row) => acc + (row.p - row.y) ** 2, 0) / rows.length;
+  const auc = aucFromBinaryScores(rows);
+
+  const bucketSize = 0.1;
+  let ece = 0;
+  for (let start = 0; start < 1; start += bucketSize) {
+    const end = Number((start + bucketSize).toFixed(2));
+    const bucket = rows.filter((row) => row.p >= start && row.p < end);
+    if (!bucket.length) {
+      continue;
+    }
+    const avgP = bucket.reduce((acc, row) => acc + row.p, 0) / bucket.length;
+    const avgY = bucket.reduce((acc, row) => acc + row.y, 0) / bucket.length;
+    ece += Math.abs(avgP - avgY) * (bucket.length / rows.length);
+  }
+
+  return {
+    logLoss: Number(logLoss.toFixed(5)),
+    brierScore: Number(brier.toFixed(5)),
+    auc,
+    ece: Number(ece.toFixed(5))
+  };
+}
+
+function summarizeResolver(gateResult) {
+  const rejected = Array.isArray(gateResult?.rejected) ? gateResult.rejected : [];
+  const accepted = Array.isArray(gateResult?.accepted) ? gateResult.accepted : [];
+  const reasonCounts = {
+    duplicatesDropped: 0,
+    timezoneMismatches: 0,
+    roundMismatches: 0,
+    kickoffOutOfWindow: 0
+  };
+
+  const issues = [];
+  for (const row of rejected) {
+    const reasons = Array.isArray(row.reasons) ? row.reasons : [];
+    if (reasons.includes("duplicate_pair_same_week")) {
+      reasonCounts.duplicatesDropped += 1;
+    }
+    if (reasons.includes("missing_kickoff_utc")) {
+      reasonCounts.timezoneMismatches += 1;
+      reasonCounts.kickoffOutOfWindow += 1;
+    }
+    if (reasons.includes("missing_round")) {
+      reasonCounts.roundMismatches += 1;
+    }
+
+    issues.push({
+      sourceMatchRef: row.id || row.match || "unknown",
+      reason: reasons[0] || "unknown",
+      home: parseMatchTeams(row.match || "").home || null,
+      away: parseMatchTeams(row.match || "").away || null,
+      kickoffUtc: row.matchDate ? `${String(row.matchDate).slice(0, 10)}T00:00:00Z` : null,
+      league: null,
+      season: currentOpenfootballSeason(new Date()),
+      round: parseRoundNumber(row.matchday) || null
+    });
+  }
+
+  return {
+    matchesResolved: accepted.length,
+    matchesUnresolved: rejected.length,
+    duplicatesDropped: reasonCounts.duplicatesDropped,
+    timezoneMismatches: reasonCounts.timezoneMismatches,
+    roundMismatches: reasonCounts.roundMismatches,
+    kickoffOutOfWindow: reasonCounts.kickoffOutOfWindow,
+    resolverIssues: issues.slice(0, 10)
+  };
+}
+
+function oddsSanitySummary(backtest, ingestionSummary) {
+  const recent = Array.isArray(backtest?.recent) ? backtest.recent : [];
+  const odds = recent.map((item) => Number(item.odd || 0)).filter((value) => Number.isFinite(value) && value > 0);
+  const oddsOutliersCount = odds.filter((value) => value <= 1.01 || value >= 1000).length;
+  const openingClosingCoveragePct = ingestionSummary?.football_data_uk?.rowsParsed
+    ? Number(clamp((odds.length / Math.max(1, ingestionSummary.football_data_uk.rowsParsed)) * 100, 0, 100).toFixed(2))
+    : 0;
+
+  return {
+    oddsRows: odds.length,
+    openingClosingCoveragePct,
+    oddsOutliersCount,
+    marketMismatchCount: 0
+  };
+}
+
+function defaultIngestionSource() {
+  return {
+    rowsFetched: 0,
+    rowsParsed: 0,
+    rowsInserted: 0,
+    rowsUpdated: 0,
+    httpErrors: 0,
+    parseErrors: 0,
+    schemaChanged: {
+      changed: false,
+      diff: []
+    },
+    rateLimited: false,
+    sourceLatencyMs: 0
+  };
+}
+
+function pushDailyTrainingReport(report) {
+  dailyTrainingState.jobs.unshift(report);
+  if (dailyTrainingState.jobs.length > MAX_DAILY_TRAINING_REPORTS) {
+    dailyTrainingState.jobs.splice(MAX_DAILY_TRAINING_REPORTS);
+  }
+  dailyTrainingState.lastJobId = report.jobId;
+  dailyTrainingState.updatedAt = new Date().toISOString();
+}
+
+function serializeDailyReport(report, include = []) {
+  if (!report) {
+    return null;
+  }
+  const includeIssues = include.includes("issues");
+  const includeAlerts = include.includes("alerts");
+
+  return {
+    jobId: report.jobId,
+    status: report.status,
+    startedAt: report.startedAt,
+    endedAt: report.endedAt,
+    durationMs: report.durationMs,
+    trigger: report.trigger,
+    codeVersion: report.codeVersion,
+    modelVersion: report.modelVersion,
+    featureVersion: report.featureVersion,
+    dataWindow: report.dataWindow,
+    activeModelVersion: report.activeModelVersion,
+    promoted: report.promoted,
+    ingestion: report.ingestion,
+    resolver: includeIssues
+      ? report.resolver
+      : {
+          ...report.resolver,
+          resolverIssues: undefined
+        },
+    training: report.training,
+    oddsSanity: report.oddsSanity,
+    alertsNewCount: report.alertsNewCount,
+    alerts: includeAlerts ? report.alerts : undefined
+  };
+}
+
+function buildCalibrationFromHistory() {
+  const decided = predictionHistory.filter(
+    (item) => (item.status === "win" || item.status === "loss") && Number.isFinite(item.confidence)
+  );
+
+  const bins = [];
+  const step = 0.1;
+  for (let start = 0.3; start < 1; start += step) {
+    const end = Number((start + step).toFixed(2));
+    const rows = decided.filter((item) => item.confidence >= start && item.confidence < end);
+    const sample = rows.length;
+    const wins = rows.filter((item) => item.status === "win").length;
+    const observed = sample ? wins / sample : null;
+    bins.push({
+      from: Number(start.toFixed(2)),
+      to: end,
+      sample,
+      observed: observed === null ? null : Number(observed.toFixed(4))
+    });
+  }
+
+  calibrationState.updatedAt = new Date().toISOString();
+  calibrationState.bins = bins;
+}
+
+function calibrateConfidence(rawConfidence) {
+  const raw = clamp(Number(rawConfidence || 0.5), 0.05, 0.95);
+  const bins = calibrationState.bins || [];
+  const hit = bins.find((bin) => raw >= bin.from && raw < bin.to && Number(bin.sample || 0) >= 8);
+  if (!hit || !Number.isFinite(hit.observed)) {
+    return raw;
+  }
+  return Number(clamp(raw * 0.55 + Number(hit.observed) * 0.45, 0.05, 0.95).toFixed(4));
+}
+
+function pushFeatureStoreVersion(matches, meta = {}) {
+  const features = (matches || []).slice(0, 400).map((item) => ({
+    matchId: item.canonicalId || canonicalMatchId(item),
+    match: item.match,
+    matchDate: item.matchDate,
+    kickoffUtc: item.kickoffUtc || matchKickoffUtc(item),
+    lineupState: item.lineupState || lineupStateForMatch(item.externalSignal || null, item.kickoffUtc || null),
+    market: item.pick || item.mainPick,
+    odd: Number(item.odd || 0),
+    confidence: Number(item.confidence || 0),
+    safetyScore: Number(item.safetyScore || 0),
+    qualityScore: Number(item.qualityScore || 0),
+    source: item.source || "unknown"
+  }));
+
+  featureStoreState.versions.unshift({
+    id: `fs-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    meta,
+    count: features.length,
+    features
+  });
+
+  if (featureStoreState.versions.length > MAX_FEATURE_VERSIONS) {
+    featureStoreState.versions.splice(MAX_FEATURE_VERSIONS);
+  }
+  featureStoreState.updatedAt = new Date().toISOString();
+}
+
+function featureStoreSummary(limit = 5) {
+  return {
+    updatedAt: featureStoreState.updatedAt,
+    versions: featureStoreState.versions.slice(0, limit).map((item) => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      count: item.count,
+      meta: item.meta
+    }))
+  };
+}
+
+function monitoringSummary(limit = 25) {
+  return {
+    updatedAt: monitoringState.updatedAt,
+    ingestion: monitoringState.ingestion,
+    mapping: monitoringState.mapping,
+    drift: monitoringState.drift,
+    alerts: monitoringState.alerts.slice(0, limit)
+  };
 }
 
 function normalizeMatchSignalKey(match, matchDate = null, eventId = null) {
@@ -348,6 +908,123 @@ function externalSignalSummary(limit = 8) {
     totalSignals: uniqueRows.length,
     latest
   };
+}
+
+function toBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["1", "true", "yes", "si", "sì", "confirmed"].includes(normalized);
+}
+
+function parseCsvRows(csvText) {
+  const text = String(csvText || "").trim();
+  if (!text) {
+    return [];
+  }
+
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const first = lines[0];
+  const delimiter = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ";" : ",";
+  const headers = first.split(delimiter).map((item) => item.trim());
+
+  return lines.slice(1).map((line) => {
+    const cols = line.split(delimiter).map((item) => item.trim());
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = cols[index] ?? "";
+    });
+    return row;
+  });
+}
+
+function buildSignalsFromWhoScoredRows(rows = []) {
+  const signals = [];
+
+  for (const row of rows) {
+    const match = String(row.match || row.Match || row.fixture || "").trim();
+    if (!match) {
+      continue;
+    }
+
+    const matchDate = String(
+      row.matchDate || row.date || row.Date || row.fixtureDate || ""
+    ).slice(0, 10);
+    const eventId = String(row.eventId || row.id || "").trim() || null;
+
+    const homeRating = toSignalNumber(row.homeRating ?? row.ratingHome, 0);
+    const awayRating = toSignalNumber(row.awayRating ?? row.ratingAway, 0);
+    const xgHome = toSignalNumber(row.xgHome ?? row.homeXg, 0);
+    const xgAway = toSignalNumber(row.xgAway ?? row.awayXg, 0);
+    const shotsHome = toSignalNumber(row.shotsHome ?? row.homeShots, 0);
+    const shotsAway = toSignalNumber(row.shotsAway ?? row.awayShots, 0);
+    const openHomeOdd = toSignalNumber(row.openHomeOdd ?? row.homeOddOpen, 0);
+    const closeHomeOdd = toSignalNumber(row.closeHomeOdd ?? row.homeOddClose, 0);
+
+    const xgEdgeHome = xgHome - xgAway;
+    const xgPace = xgHome + xgAway - 2.5;
+    const ratingEdge = homeRating - awayRating;
+    const shotEdge = shotsHome - shotsAway;
+
+    const marketConfidence = {};
+    const marketOddsDrift = {};
+
+    if (xgEdgeHome >= 0.3 || ratingEdge >= 0.35 || shotEdge >= 3) {
+      marketConfidence["1X"] = clamp(0.02 + xgEdgeHome * 0.02 + ratingEdge * 0.03, -0.1, 0.1);
+      marketConfidence["DRAW NO BET 1"] = clamp(0.03 + xgEdgeHome * 0.025, -0.1, 0.12);
+    }
+
+    if (xgEdgeHome <= -0.3 || ratingEdge <= -0.35 || shotEdge <= -3) {
+      marketConfidence["X2"] = clamp(0.02 + Math.abs(xgEdgeHome) * 0.02 + Math.abs(ratingEdge) * 0.03, -0.1, 0.1);
+      marketConfidence["DRAW NO BET 2"] = clamp(0.03 + Math.abs(xgEdgeHome) * 0.025, -0.1, 0.12);
+    }
+
+    if (xgPace >= 0.25) {
+      marketConfidence["OVER 1.5"] = clamp(0.03 + xgPace * 0.03, -0.1, 0.12);
+      marketConfidence["OVER 2.5"] = clamp(0.02 + xgPace * 0.02, -0.1, 0.1);
+      marketConfidence["GG"] = clamp(0.01 + xgPace * 0.015, -0.08, 0.08);
+    }
+
+    if (xgPace <= -0.25) {
+      marketConfidence["UNDER 3.5"] = clamp(0.03 + Math.abs(xgPace) * 0.02, -0.1, 0.12);
+      marketConfidence["NG"] = clamp(0.01 + Math.abs(xgPace) * 0.015, -0.08, 0.08);
+    }
+
+    if (openHomeOdd > 1 && closeHomeOdd > 1) {
+      const driftHome = clamp((openHomeOdd - closeHomeOdd) / openHomeOdd, -0.2, 0.2);
+      marketOddsDrift["1X"] = clamp(driftHome * 0.08, -0.1, 0.1);
+      marketOddsDrift["DRAW NO BET 1"] = clamp(driftHome * 0.09, -0.1, 0.1);
+    }
+
+    signals.push({
+      source: "whoscored-import",
+      match,
+      matchDate: matchDate || null,
+      eventId,
+      lineupConfirmed: toBoolean(row.lineupConfirmed ?? row.confirmedLineup),
+      unavailableHome: Math.max(0, Math.round(toSignalNumber(row.unavailableHome ?? row.homeMissing, 0))),
+      unavailableAway: Math.max(0, Math.round(toSignalNumber(row.unavailableAway ?? row.awayMissing, 0))),
+      suspendedHome: Math.max(0, Math.round(toSignalNumber(row.suspendedHome, 0))),
+      suspendedAway: Math.max(0, Math.round(toSignalNumber(row.suspendedAway, 0))),
+      rotationRiskHome: clamp(toSignalNumber(row.rotationRiskHome, 0), 0, 1),
+      rotationRiskAway: clamp(toSignalNumber(row.rotationRiskAway, 0), 0, 1),
+      xgEdgeHome,
+      xgPace,
+      oddsDriftHome:
+        openHomeOdd > 1 && closeHomeOdd > 1
+          ? clamp((openHomeOdd - closeHomeOdd) / openHomeOdd, -0.2, 0.2)
+          : 0,
+      marketConfidence,
+      marketOddsDrift
+    });
+  }
+
+  return signals;
 }
 
 function extractOdds(text) {
@@ -737,7 +1414,10 @@ async function persistAiMemory() {
     savedAt: new Date().toISOString(),
     predictionHistory: predictionHistory.slice(0, MAX_HISTORY_ITEMS),
     aiLearningState,
-    externalSignalState
+    externalSignalState,
+    featureStoreState,
+    calibrationState,
+    monitoringState
   };
 
   await fs.mkdir(MEMORY_DIR, { recursive: true });
@@ -764,6 +1444,33 @@ async function loadAiMemory() {
     if (storedSignals && typeof storedSignals === "object") {
       externalSignalState.updatedAt = storedSignals.updatedAt || null;
       externalSignalState.byMatch = storedSignals.byMatch || {};
+    }
+
+    const storedFeatureStore = parsed.featureStoreState;
+    if (storedFeatureStore && typeof storedFeatureStore === "object") {
+      featureStoreState.updatedAt = storedFeatureStore.updatedAt || null;
+      featureStoreState.versions = Array.isArray(storedFeatureStore.versions)
+        ? storedFeatureStore.versions
+        : [];
+    }
+
+    const storedCalibration = parsed.calibrationState;
+    if (storedCalibration && typeof storedCalibration === "object") {
+      calibrationState.updatedAt = storedCalibration.updatedAt || null;
+      calibrationState.bins = Array.isArray(storedCalibration.bins)
+        ? storedCalibration.bins
+        : [];
+    }
+
+    const storedMonitoring = parsed.monitoringState;
+    if (storedMonitoring && typeof storedMonitoring === "object") {
+      monitoringState.updatedAt = storedMonitoring.updatedAt || null;
+      monitoringState.ingestion = storedMonitoring.ingestion || monitoringState.ingestion;
+      monitoringState.mapping = storedMonitoring.mapping || monitoringState.mapping;
+      monitoringState.drift = storedMonitoring.drift || monitoringState.drift;
+      monitoringState.alerts = Array.isArray(storedMonitoring.alerts)
+        ? storedMonitoring.alerts
+        : monitoringState.alerts;
     }
   } catch {
     return;
@@ -872,6 +1579,55 @@ function learningSummary() {
   };
 }
 
+function recentMarketStats(windowSize = QUALITY_CONFIG.marketDrawdownWindow) {
+  const decided = predictionHistory
+    .filter((item) => item.status === "win" || item.status === "loss")
+    .slice(0, Math.max(10, windowSize * 4));
+
+  const byMarket = new Map();
+  for (const row of decided) {
+    const market = row.mainMarket;
+    if (!market) {
+      continue;
+    }
+    if (!byMarket.has(market)) {
+      byMarket.set(market, []);
+    }
+    byMarket.get(market).push(row.status === "win");
+  }
+
+  const result = {};
+  for (const [market, hits] of byMarket.entries()) {
+    const recent = hits.slice(0, windowSize);
+    const total = recent.length;
+    const win = recent.filter(Boolean).length;
+    result[market] = {
+      total,
+      win,
+      accuracy: total ? Number((win / total).toFixed(4)) : null
+    };
+  }
+  return result;
+}
+
+function blockedMarketsByDrawdown() {
+  const stats = recentMarketStats(QUALITY_CONFIG.marketDrawdownWindow);
+  const blocked = [];
+  for (const [market, row] of Object.entries(stats)) {
+    if (
+      Number(row.total || 0) >= QUALITY_CONFIG.marketDrawdownMinDecided &&
+      Number(row.accuracy || 0) < QUALITY_CONFIG.marketDrawdownMinAccuracy
+    ) {
+      blocked.push(market);
+    }
+  }
+  return blocked;
+}
+
+function isMarketBlocked(market) {
+  return blockedMarketsByDrawdown().includes(String(market));
+}
+
 function marketReliability(market) {
   const calibratedRate = Number(aiTrainingState.marketHitRates?.[market] || 0.5);
   const learned = aiLearningState.marketOutcomes?.[market];
@@ -920,6 +1676,10 @@ function qualityScoreFromCandidate(candidate, risk, signal = null) {
 
 function isCandidateHighQuality(candidate, risk, signal = null) {
   if (!candidate) {
+    return false;
+  }
+
+  if (isMarketBlocked(candidate.market)) {
     return false;
   }
 
@@ -1091,7 +1851,10 @@ async function refreshPredictionHistory(limit = 120) {
 
 function pushPredictionHistory(system, meta = {}) {
   const generatedAt = new Date().toISOString();
-  const selectedEvents = system?.selectedEvents || [];
+  const selectedEvents =
+    (Array.isArray(system?.events) ? system.events : null) ||
+    system?.selectedEvents ||
+    [];
 
   for (const event of selectedEvents) {
     const candidate = {
@@ -1141,6 +1904,36 @@ function pushPredictionHistory(system, meta = {}) {
   }
 
   persistAiMemory().catch(() => null);
+}
+
+function buildTrackableEvents(matches, risk, limit = 60) {
+  return (matches || [])
+    .slice(0, clamp(parseInputNumber(limit, 60), 3, 200))
+    .map((match) => {
+      const signal =
+        match.externalSignal ||
+        getExternalSignalForMatch(match.match, match.matchDate, match.id) ||
+        null;
+      const top = pickTopMarkets(match.marketCandidates || [], risk, signal);
+      const main = top.main;
+      const secondary = top.secondary;
+      if (!main) {
+        return null;
+      }
+
+      return {
+        id: match.id,
+        match: match.match,
+        matchDate: match.matchDate,
+        mainPick: main.market,
+        secondaryPick: secondary?.market || backupPickFor(main.market),
+        odd: Number(main.odd || match.odd || 1.5),
+        secondaryOdd: Number(secondary?.odd || oddForPick(main.odd, true)),
+        confidence: Number(main.confidence || match.confidence || 0.5),
+        safetyScore: Number(main.score || main.confidence || match.confidence || 0.5)
+      };
+    })
+    .filter(Boolean);
 }
 
 async function recalibrateAiFromRecentResults(days = 30, scope = "all") {
@@ -1306,8 +2099,488 @@ async function runRollingBacktest({ days = 21, risk = 0.4, maxPerDay = 10, scope
       accuracy
     },
     byMarket,
-    recent: picks.slice(-20)
+    recent: picks.slice(-20),
+    evaluationRows: picks.slice(-600)
   };
+}
+
+function currentSeasonToken(referenceDate = new Date()) {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth() + 1;
+  const startYear = month >= 7 ? year : year - 1;
+  const endYear = startYear + 1;
+  return `${String(startYear).slice(-2)}${String(endYear).slice(-2)}`;
+}
+
+function currentOpenfootballSeason(referenceDate = new Date()) {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth() + 1;
+  const startYear = month >= 7 ? year : year - 1;
+  const endYear = startYear + 1;
+  return `${startYear}-${String(endYear).slice(-2)}`;
+}
+
+function mergeTrainingStatsIntoAi(statsMap) {
+  const output = { ...aiTrainingState.marketHitRates };
+  for (const [market, row] of statsMap.entries()) {
+    if (!row.total) {
+      continue;
+    }
+    const rate = row.hit / row.total;
+    const previous = Number(output[market] || 0.5);
+    const weight = clamp(row.total / 500, 0.1, 0.65);
+    output[market] = Number((previous * (1 - weight) + rate * weight).toFixed(3));
+  }
+  aiTrainingState.marketHitRates = output;
+  aiTrainingState.updatedAt = new Date().toISOString();
+}
+
+async function ingestFootballDataTraining(referenceDate = new Date()) {
+  const previous = dailyTrainingState.jobs[0]?.ingestion?.football_data_uk || null;
+  const leagues = ["I1", "E0", "D1", "SP1", "F1"];
+  const season = currentSeasonToken(referenceDate);
+  const stats = new Map();
+  let rowsUsed = 0;
+  const source = defaultIngestionSource();
+  const schemas = new Set();
+  const started = Date.now();
+
+  for (const league of leagues) {
+    const url = `https://www.football-data.co.uk/mmz4281/${season}/${league}.csv`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        source.httpErrors += 1;
+        source.rateLimited = source.rateLimited || response.status === 429;
+        continue;
+      }
+
+      const csvText = await response.text();
+      const headers = String(csvText).split("\n")[0] || "";
+      schemas.add(headers);
+
+      const rows = parseCsvRows(csvText);
+      source.rowsFetched += rows.length;
+      source.rowsParsed += rows.length;
+      for (const row of rows) {
+        const homeGoals = Number(row.FTHG);
+        const awayGoals = Number(row.FTAG);
+        if (!Number.isFinite(homeGoals) || !Number.isFinite(awayGoals)) {
+          source.parseErrors += 1;
+          continue;
+        }
+
+        rowsUsed += 1;
+        const event = {
+          homeScore: { current: homeGoals, period1: Number(row.HTHG || 0) },
+          awayScore: { current: awayGoals, period1: Number(row.HTAG || 0) }
+        };
+        const hits = marketHitsForEvent(event);
+        for (const [market, hit] of Object.entries(hits)) {
+          if (!stats.has(market)) {
+            stats.set(market, { hit: 0, total: 0 });
+          }
+          const acc = stats.get(market);
+          acc.total += 1;
+          acc.hit += hit ? 1 : 0;
+        }
+      }
+    } catch {
+      source.httpErrors += 1;
+    }
+  }
+
+  if (rowsUsed > 0) {
+    mergeTrainingStatsIntoAi(stats);
+  }
+
+  source.rowsInserted = rowsUsed;
+  source.rowsUpdated = 0;
+  source.sourceLatencyMs = Date.now() - started;
+
+  const schemaSnapshot = [...schemas].sort();
+  const previousSchema = Array.isArray(previous?.schemaSnapshot) ? previous.schemaSnapshot : [];
+  const diff = schemaSnapshot.filter((row) => !previousSchema.includes(row));
+  source.schemaChanged = {
+    changed: diff.length > 0,
+    diff
+  };
+  source.schemaSnapshot = schemaSnapshot;
+
+  return {
+    source: "football_data_uk",
+    season,
+    ...source
+  };
+}
+
+async function ingestOpenfootballSnapshot(referenceDate = new Date()) {
+  const previous = dailyTrainingState.jobs[0]?.ingestion?.openfootball || null;
+  const season = currentOpenfootballSeason(referenceDate);
+  const files = ["it.1", "en.1", "de.1", "es.1", "fr.1"];
+  const source = defaultIngestionSource();
+  const signature = new Set();
+  const started = Date.now();
+
+  for (const code of files) {
+    const url = `https://raw.githubusercontent.com/openfootball/football.json/master/${season}/${code}.json`;
+    const payload = await fetchJson(url);
+    if (!payload) {
+      source.httpErrors += 1;
+      continue;
+    }
+
+    signature.add(Object.keys(payload).sort().join("|"));
+    const rounds = Array.isArray(payload.rounds) ? payload.rounds : [];
+    source.rowsFetched += rounds.length;
+    source.rowsParsed += rounds.length;
+    for (const round of rounds) {
+      const matches = Array.isArray(round.matches) ? round.matches : [];
+      source.rowsInserted += matches.length;
+    }
+  }
+
+  source.rowsUpdated = 0;
+  source.sourceLatencyMs = Date.now() - started;
+  const schemaSnapshot = [...signature].sort();
+  const previousSchema = Array.isArray(previous?.schemaSnapshot) ? previous.schemaSnapshot : [];
+  const diff = schemaSnapshot.filter((row) => !previousSchema.includes(row));
+  source.schemaChanged = {
+    changed: diff.length > 0,
+    diff
+  };
+  source.schemaSnapshot = schemaSnapshot;
+
+  return {
+    source: "openfootball",
+    season,
+    ...source
+  };
+}
+
+async function runDailyAutoTraining({ trigger = "cron" } = {}) {
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
+  const dataWindowStart = new Date(started);
+  dataWindowStart.setUTCDate(dataWindowStart.getUTCDate() - TRAINING_CONFIG.backtestDays);
+  const initialAlerts = monitoringState.alerts.length;
+  const featureVersionCandidate = featureStoreState.versions.length + 1;
+  const modelVersion = modelVersionToken(new Date(started));
+  const codeVersion = safeGitCommitHash();
+  const previousReport = dailyTrainingState.jobs[0] || null;
+  const previousActiveModelVersion = dailyTrainingState.activeModelVersion;
+
+  const jobReport = {
+    jobId: randomUUID(),
+    status: "success",
+    startedAt,
+    endedAt: null,
+    durationMs: 0,
+    trigger,
+    codeVersion,
+    modelVersion,
+    featureVersion: featureVersionCandidate,
+    dataWindow: {
+      fromUtc: dataWindowStart.toISOString(),
+      toUtc: new Date(started).toISOString()
+    },
+    ingestion: {
+      understat: defaultIngestionSource(),
+      football_data_uk: defaultIngestionSource(),
+      openfootball: defaultIngestionSource()
+    },
+    resolver: {
+      matchesResolved: 0,
+      matchesUnresolved: 0,
+      duplicatesDropped: 0,
+      timezoneMismatches: 0,
+      roundMismatches: 0,
+      kickoffOutOfWindow: 0,
+      resolverIssues: []
+    },
+    training: {
+      trainSamples: 0,
+      testSamples: 0,
+      baselineAccuracy: null,
+      latestAccuracy: null,
+      logLoss: null,
+      brierScore: null,
+      auc: null,
+      calibration: {
+        method: "none",
+        ece: null,
+        calibrationUpdated: false
+      },
+      overfitGuard: {
+        deltaTrainVsTest: null,
+        blocked: false
+      }
+    },
+    oddsSanity: {
+      oddsRows: 0,
+      openingClosingCoveragePct: 0,
+      oddsOutliersCount: 0,
+      marketMismatchCount: 0
+    },
+    alertsNewCount: 0,
+    alerts: [],
+    promoted: false,
+    activeModelVersion: previousActiveModelVersion
+  };
+
+  monitoringState.ingestion = {
+    ...monitoringState.ingestion,
+    lastRunAt: startedAt,
+    status: "running"
+  };
+  monitoringState.updatedAt = startedAt;
+
+  try {
+    const footballData = await ingestFootballDataTraining(new Date());
+    const openfootball = await ingestOpenfootballSnapshot(new Date());
+    jobReport.ingestion.football_data_uk = footballData;
+    jobReport.ingestion.openfootball = openfootball;
+
+    await recalibrateAiFromRecentResults(TRAINING_CONFIG.lookbackDays, TRAINING_CONFIG.scope);
+    await refreshPredictionHistory(220);
+    const previousCalibrationAt = calibrationState.updatedAt;
+    buildCalibrationFromHistory();
+
+    const backtest = await runRollingBacktest({
+      days: TRAINING_CONFIG.backtestDays,
+      risk: 0.4,
+      maxPerDay: TRAINING_CONFIG.backtestMaxPerDay,
+      scope: TRAINING_CONFIG.scope,
+      abstainMode: true
+    });
+
+    const latestAccuracy = Number(backtest?.summary?.accuracy || 0);
+    const previousAccuracy = Number(monitoringState.drift?.latestAccuracy || latestAccuracy);
+    const delta = Number((latestAccuracy - previousAccuracy).toFixed(4));
+
+    const metrics = metricsFromPicks(backtest?.evaluationRows || []);
+    const previousLogLoss = Number(previousReport?.training?.logLoss || 0);
+    const logLossDegradationPct = previousLogLoss > 0
+      ? Number((((metrics.logLoss || 0) - previousLogLoss) / previousLogLoss * 100).toFixed(2))
+      : 0;
+
+    monitoringState.ingestion = {
+      lastRunAt: new Date().toISOString(),
+      status: "ok",
+      sources: {
+        footballData,
+        openfootball
+      }
+    };
+    monitoringState.mapping = {
+      lastRunAt: new Date().toISOString(),
+      acceptedRate: qualityAuditLog[0]
+        ? Number((qualityAuditLog[0].accepted / Math.max(1, qualityAuditLog[0].input)).toFixed(4))
+        : null,
+      rejectedRate: qualityAuditLog[0]
+        ? Number((qualityAuditLog[0].rejected / Math.max(1, qualityAuditLog[0].input)).toFixed(4))
+        : null
+    };
+    monitoringState.drift = {
+      lastRunAt: new Date().toISOString(),
+      baselineAccuracy:
+        monitoringState.drift?.baselineAccuracy === null || monitoringState.drift?.baselineAccuracy === undefined
+          ? latestAccuracy
+          : monitoringState.drift.baselineAccuracy,
+      latestAccuracy,
+      delta
+    };
+    monitoringState.calibration = {
+      lastRunAt: new Date().toISOString(),
+      method: calibrationState.bins.length ? "isotonic" : "none",
+      ece: metrics.ece
+    };
+    monitoringState.updatedAt = new Date().toISOString();
+
+    if (delta < -0.05) {
+      pushMonitorAlert("drift", "Accuracy in calo oltre soglia", {
+        previousAccuracy,
+        latestAccuracy,
+        delta
+      }, "warn", "DRIFT_ACCURACY_DROP");
+    }
+
+    const unified = await getUnifiedMatches(7, 40, new Date());
+    const gated = applyDataQualityGate(unified.matches, { source: unified.source });
+    const riskAware = rankMatchesForRisk(applyRiskProfileToMatches(gated.accepted, 0.4), 0.4, 20, "Italia");
+    const resolver = summarizeResolver(gated);
+    const resolverMismatchRate = (resolver.matchesResolved + resolver.matchesUnresolved) > 0
+      ? resolver.matchesUnresolved / (resolver.matchesResolved + resolver.matchesUnresolved)
+      : 0;
+
+    const trainSampleRates = Object.values(aiTrainingState.marketHitRates || {}).slice(0, 20);
+    const trainAccuracyProxy = trainSampleRates.length
+      ? trainSampleRates.reduce((acc, value) => acc + Number(value || 0), 0) / trainSampleRates.length
+      : latestAccuracy;
+    const deltaTrainVsTest = Number((trainAccuracyProxy - latestAccuracy).toFixed(4));
+
+    const criticalAlerts = monitoringState.alerts.filter((alert) => alert.severity === "critical").length;
+    const overfitBlocked = deltaTrainVsTest > TRAINING_POLICY.overfitDeltaBlock;
+    const logLossBlocked = logLossDegradationPct > TRAINING_POLICY.logLossDegradationPctBlock;
+
+    let status = "success";
+    if (criticalAlerts >= TRAINING_POLICY.maxCriticalAlertsBeforeFail || resolverMismatchRate >= TRAINING_POLICY.resolverMismatchRateFail) {
+      status = "failed";
+    } else if (
+      criticalAlerts > 0 ||
+      resolverMismatchRate >= TRAINING_POLICY.resolverMismatchRateWarn ||
+      overfitBlocked ||
+      logLossBlocked
+    ) {
+      status = "partial_success";
+    }
+
+    if (resolverMismatchRate >= TRAINING_POLICY.resolverMismatchRateWarn) {
+      pushMonitorAlert(
+        "resolver",
+        "Resolver mismatch oltre soglia",
+        {
+          resolverMismatchRate: Number(resolverMismatchRate.toFixed(4)),
+          unresolved: resolver.matchesUnresolved,
+          resolved: resolver.matchesResolved
+        },
+        resolverMismatchRate >= TRAINING_POLICY.resolverMismatchRateFail ? "critical" : "warn",
+        "RESOLVER_MISMATCH"
+      );
+    }
+
+    if (logLossBlocked) {
+      pushMonitorAlert(
+        "training",
+        "LogLoss peggiorato oltre soglia",
+        {
+          previousLogLoss,
+          latestLogLoss: metrics.logLoss,
+          degradationPct: logLossDegradationPct
+        },
+        "critical",
+        "LOGLOSS_DEGRADATION"
+      );
+    }
+
+    if (overfitBlocked) {
+      pushMonitorAlert(
+        "training",
+        "Overfit guard attivato",
+        {
+          deltaTrainVsTest,
+          threshold: TRAINING_POLICY.overfitDeltaBlock
+        },
+        "warn",
+        "OVERFIT_GUARD"
+      );
+    }
+
+    pushFeatureStoreVersion(riskAware, {
+      source: "daily-auto-training",
+      accepted: gated.accepted.length,
+      rejected: gated.rejected.length,
+      backtestAccuracy: latestAccuracy
+    });
+
+    const featureVersionApplied = featureStoreState.versions.length;
+    const shouldPromote = status === "success" && !overfitBlocked && !logLossBlocked;
+    if (shouldPromote) {
+      dailyTrainingState.activeModelVersion = modelVersion;
+      dailyTrainingState.activeFeatureVersion = featureVersionApplied;
+    }
+
+    const endedAt = new Date().toISOString();
+    const alertsSlice = monitoringState.alerts.slice(0, Math.max(0, monitoringState.alerts.length - initialAlerts));
+    jobReport.status = status;
+    jobReport.endedAt = endedAt;
+    jobReport.durationMs = Math.max(1, Date.parse(endedAt) - started);
+    jobReport.featureVersion = featureVersionApplied;
+    jobReport.resolver = resolver;
+    jobReport.training = {
+      trainSamples: Number(aiTrainingState.sampleSize || 0),
+      testSamples: Number(backtest?.summary?.evaluatedPicks || 0),
+      baselineAccuracy: monitoringState.drift.baselineAccuracy,
+      latestAccuracy,
+      logLoss: metrics.logLoss,
+      brierScore: metrics.brierScore,
+      auc: metrics.auc,
+      calibration: {
+        method: calibrationState.bins.length ? "isotonic" : "none",
+        ece: metrics.ece,
+        calibrationUpdated: previousCalibrationAt !== calibrationState.updatedAt
+      },
+      overfitGuard: {
+        deltaTrainVsTest,
+        blocked: overfitBlocked
+      }
+    };
+    jobReport.oddsSanity = oddsSanitySummary(backtest, jobReport.ingestion);
+    jobReport.alertsNewCount = alertsSlice.length;
+    jobReport.alerts = alertsSlice.map((alert) => ({
+      severity: alert.severity || "warn",
+      code: alert.code || alert.type || "GENERIC",
+      message: alert.message,
+      context: alert.detail || {}
+    }));
+    jobReport.promoted = shouldPromote;
+    jobReport.activeModelVersion = dailyTrainingState.activeModelVersion || previousActiveModelVersion;
+
+    if (!shouldPromote) {
+      jobReport.activeModelVersion = previousActiveModelVersion;
+    }
+
+    pushDailyTrainingReport(jobReport);
+
+    await persistAiMemory();
+
+    return {
+      ok: true,
+      jobId: jobReport.jobId,
+      startedAt,
+      finishedAt: jobReport.endedAt,
+      status: jobReport.status,
+      promoted: jobReport.promoted,
+      activeModelVersion: jobReport.activeModelVersion,
+      ingestion: monitoringState.ingestion,
+      drift: monitoringState.drift,
+      featureStore: featureStoreSummary(1)
+    };
+  } catch (error) {
+    monitoringState.ingestion = {
+      ...monitoringState.ingestion,
+      status: "error"
+    };
+    monitoringState.updatedAt = new Date().toISOString();
+    pushMonitorAlert("ingestion", "Errore nel daily auto training", {
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    }, "critical", "TRAINING_RUNTIME_ERROR");
+
+    const endedAt = new Date().toISOString();
+    const failed = {
+      ...jobReport,
+      status: "failed",
+      endedAt,
+      durationMs: Math.max(1, Date.parse(endedAt) - started),
+      alertsNewCount: 1,
+      alerts: [
+        {
+          severity: "critical",
+          code: "TRAINING_RUNTIME_ERROR",
+          message: "Errore nel daily auto training",
+          context: {
+            detail: error instanceof Error ? error.message : "Errore sconosciuto"
+          }
+        }
+      ],
+      promoted: false,
+      activeModelVersion: previousActiveModelVersion
+    };
+    pushDailyTrainingReport(failed);
+
+    await persistAiMemory().catch(() => null);
+    throw error;
+  }
 }
 
 function normalizeTeamForm(form) {
@@ -1774,6 +3047,14 @@ function pickTopMarkets(candidates, risk, signal = null) {
     "OVER 0.5 1T",
     "OVER 0.5 2T"
   ]);
+  const lineupState = lineupStateForMatch(signal, null);
+  const lineupSensitiveMarkets = new Set([
+    "OVER 2.5",
+    "OVER 3.5",
+    "GG + OVER 2.5",
+    "1",
+    "2"
+  ]);
 
   const valueCandidates = (candidates || []).filter((item) => !lowValueMarkets.has(item.market));
 
@@ -1804,6 +3085,12 @@ function pickTopMarkets(candidates, risk, signal = null) {
       };
     })
     .filter((item) => !lowValueMarkets.has(item.market))
+    .filter((item) => {
+      if (risk <= 0.5 && lineupState !== "LOCKED" && lineupSensitiveMarkets.has(item.market)) {
+        return false;
+      }
+      return true;
+    })
     .filter((item) => item.odd >= QUALITY_CONFIG.minCandidateOdd)
     .filter((item) => item.confidence >= Math.max(QUALITY_CONFIG.minCandidateConf, dynamicMarketThreshold(item.market, risk)))
     .filter((item) => item.qualityScore >= QUALITY_CONFIG.minMainScore)
@@ -2547,26 +3834,23 @@ function buildParachuteSystem(matches, options) {
 
   const aligned = chooseAlignedPool(candidatePool.slice(0, maxMatches));
 
-  let selectedForSystem = aligned.pool
-    .sort((a, b) => b.selectionScore - a.selectionScore)
-    .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
-
-  if (diversifyMode) {
-    selectedForSystem = diversifySelectedMatches(
-      selectedForSystem,
-      QUALITY_CONFIG.maxPicksPerCoupon
-    );
-  }
+  const rankedAligned = [...aligned.pool].sort((a, b) => b.selectionScore - a.selectionScore);
+  let selectedForSystem = diversifyMode
+    ? diversifySelectedMatches(rankedAligned, QUALITY_CONFIG.maxPicksPerCoupon)
+    : rankedAligned.slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
 
   if (selectedForSystem.length < 3) {
-    const fromCurrentWindow = [...enriched]
-      .sort((a, b) => b.selectionScore - a.selectionScore)
-      .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
+    const rankedCurrentWindow = [...enriched].sort(
+      (a, b) => b.selectionScore - a.selectionScore
+    );
+    const fromCurrentWindow = diversifyMode
+      ? diversifySelectedMatches(rankedCurrentWindow, QUALITY_CONFIG.maxPicksPerCoupon)
+      : rankedCurrentWindow.slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
 
     if (fromCurrentWindow.length >= 3) {
       selectedForSystem = fromCurrentWindow;
     } else {
-      const fallbackAligned = getFallbackMatches()
+      const fallbackAlignedPool = getFallbackMatches()
         .map((item) => ({
           id: item.id,
           match: item.match,
@@ -2592,17 +3876,11 @@ function buildParachuteSystem(matches, options) {
           kickoffSlot: item.kickoffSlot,
           source: item.source
         }))
-        .sort((a, b) => b.selectionScore - a.selectionScore)
-        .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
-      selectedForSystem = fallbackAligned;
+        .sort((a, b) => b.selectionScore - a.selectionScore);
+      selectedForSystem = diversifyMode
+        ? diversifySelectedMatches(fallbackAlignedPool, QUALITY_CONFIG.maxPicksPerCoupon)
+        : fallbackAlignedPool.slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
     }
-  }
-
-  if (diversifyMode) {
-    selectedForSystem = diversifySelectedMatches(
-      selectedForSystem,
-      QUALITY_CONFIG.maxPicksPerCoupon
-    );
   }
 
   const candidateTickets = buildCandidateTickets(selectedForSystem);
@@ -2979,6 +4257,8 @@ async function askLlmForRefinement(payload) {
 
 app.get("/api/health", (_, res) => {
   const summary = createHistorySummary(predictionHistory);
+  const drawdownStats = recentMarketStats(QUALITY_CONFIG.marketDrawdownWindow);
+  const blockedMarkets = blockedMarketsByDrawdown();
   res.json({
     ok: true,
     sourceUrl,
@@ -2987,8 +4267,25 @@ app.get("/api/health", (_, res) => {
     aiLearning: learningSummary(),
     externalSignals: externalSignalSummary(),
     qualityConfig: QUALITY_CONFIG,
+    marketDrawdown: {
+      blockedMarkets,
+      stats: drawdownStats
+    },
+    dataQuality: {
+      config: DATA_QUALITY_CONFIG,
+      lastAudit: qualityAuditLog[0] || null
+    },
     predictionHistory: summary,
     marketUniverse: getMarketUniverseSummary()
+  });
+});
+
+app.get("/api/quality/audit", (req, res) => {
+  const limit = clamp(parseInputNumber(req.query?.limit, 20), 1, 100);
+  res.json({
+    generatedAt: new Date().toISOString(),
+    config: DATA_QUALITY_CONFIG,
+    items: qualityAuditLog.slice(0, limit)
   });
 });
 
@@ -3027,6 +4324,46 @@ app.post("/api/signals/external", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       error: "Errore ingest segnali esterni.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
+app.post("/api/signals/whoscored", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const rowsFromJson = Array.isArray(body.rows) ? body.rows : [];
+    const rowsFromCsv = body.csvText ? parseCsvRows(body.csvText) : [];
+    const rows = [...rowsFromJson, ...rowsFromCsv];
+
+    if (!rows.length) {
+      return res.status(400).json({
+        error: "Nessun dato WhoScored ricevuto.",
+        detail: "Invia 'rows' (array JSON) oppure 'csvText'."
+      });
+    }
+
+    const signals = buildSignalsFromWhoScoredRows(rows);
+    if (!signals.length) {
+      return res.status(400).json({
+        error: "Dati WhoScored non validi.",
+        detail: "Ogni riga deve contenere almeno 'match' (e opzionale matchDate/eventId)."
+      });
+    }
+
+    const changed = upsertExternalSignals(signals);
+    await persistAiMemory();
+
+    return res.json({
+      ok: true,
+      importedRows: rows.length,
+      generatedSignals: signals.length,
+      changed,
+      summary: externalSignalSummary()
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Errore import WhoScored.",
       detail: error instanceof Error ? error.message : "Errore sconosciuto"
     });
   }
@@ -3105,6 +4442,122 @@ app.post("/api/train/backtest", async (req, res) => {
   }
 });
 
+app.post("/api/train/autotune", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const days = clamp(parseInputNumber(body.days, 21), 7, 60);
+    const risk = clamp(parseInputNumber(body.risk, 0.4), 0.05, 0.95);
+    const maxPerDay = clamp(parseInputNumber(body.maxPerDay, 10), 3, 30);
+    const scope = String(body.scope || "all");
+    const abstainMode = String(body.abstainMode ?? "1") !== "0";
+
+    const candidateSettings = [
+      { minMainScore: 0.62, minMainConfidence: 0.56, minMainOdd: 1.35, abstainQualityQuantile: 0.72 },
+      { minMainScore: 0.64, minMainConfidence: 0.58, minMainOdd: 1.4, abstainQualityQuantile: 0.74 },
+      { minMainScore: 0.66, minMainConfidence: 0.6, minMainOdd: 1.45, abstainQualityQuantile: 0.76 },
+      { minMainScore: 0.68, minMainConfidence: 0.62, minMainOdd: 1.5, abstainQualityQuantile: 0.78 }
+    ];
+
+    const baselineConfig = {
+      minMainScore: QUALITY_CONFIG.minMainScore,
+      minMainConfidence: QUALITY_CONFIG.minMainConfidence,
+      minMainOdd: QUALITY_CONFIG.minMainOdd,
+      abstainQualityQuantile: QUALITY_CONFIG.abstainQualityQuantile
+    };
+
+    let best = null;
+    const runs = [];
+
+    for (const setting of candidateSettings) {
+      QUALITY_CONFIG.minMainScore = setting.minMainScore;
+      QUALITY_CONFIG.minMainConfidence = setting.minMainConfidence;
+      QUALITY_CONFIG.minMainOdd = setting.minMainOdd;
+      QUALITY_CONFIG.abstainQualityQuantile = setting.abstainQualityQuantile;
+
+      const result = await runRollingBacktest({
+        days,
+        risk,
+        maxPerDay,
+        scope: scope === "serieA" ? "serieA" : "all",
+        abstainMode
+      });
+
+      const accuracy = Number(result?.summary?.accuracy || 0);
+      const evaluated = Number(result?.summary?.evaluatedPicks || 0);
+      const score = Number((accuracy * Math.min(1, evaluated / 100)).toFixed(6));
+
+      const run = {
+        setting,
+        summary: result.summary,
+        score
+      };
+      runs.push(run);
+
+      if (!best || score > best.score) {
+        best = run;
+      }
+    }
+
+    const applied = best?.setting || baselineConfig;
+    QUALITY_CONFIG.minMainScore = applied.minMainScore;
+    QUALITY_CONFIG.minMainConfidence = applied.minMainConfidence;
+    QUALITY_CONFIG.minMainOdd = applied.minMainOdd;
+    QUALITY_CONFIG.abstainQualityQuantile = applied.abstainQualityQuantile;
+
+    await persistAiMemory();
+
+    res.json({
+      ok: true,
+      config: {
+        days,
+        risk,
+        maxPerDay,
+        scope,
+        abstainMode
+      },
+      baselineConfig,
+      applied,
+      best,
+      runs
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Errore durante autotuning soglie.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
+app.post("/api/train/daily", async (_req, res) => {
+  try {
+    const report = await runDailyAutoTraining();
+    res.json(report);
+  } catch (error) {
+    console.error("/api/train/daily error", error);
+    res.status(500).json({
+      error: "Autotraining giornaliero fallito",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
+app.get("/api/monitoring", (_req, res) => {
+  res.json({
+    updatedAt: monitoringState.updatedAt || null,
+    ingestion: monitoringState.ingestion,
+    mapping: monitoringState.mapping,
+    calibration: monitoringState.calibration,
+    drift: monitoringState.drift,
+    alerts: monitoringState.alerts.slice(0, 100),
+    featureStore: featureStoreSummary(5),
+    calibrationState: {
+      updatedAt: calibrationState.updatedAt,
+      confidenceScale: calibrationState.confidenceScale,
+      reliabilityByBucket: calibrationState.reliabilityByBucket
+    }
+  });
+});
+
 app.get("/api/matches", async (_, res) => {
   try {
     const risk = clamp(parseInputNumber(_.query?.risk, 0.45), 0.05, 0.95);
@@ -3115,8 +4568,12 @@ app.get("/api/matches", async (_, res) => {
     const startDate = parseIsoDateInput(_.query?.startDate, new Date());
     const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
+    const qualityGate = applyDataQualityGate(teamFiltered, {
+      startDate: unified.startDate,
+      timeRangeDays
+    });
     const riskAware = rankMatchesForRisk(
-      applyRiskProfileToMatches(teamFiltered, risk),
+      applyRiskProfileToMatches(qualityGate.accepted, risk),
       risk,
       maxMatches,
       focusCountry
@@ -3130,6 +4587,10 @@ app.get("/api/matches", async (_, res) => {
       startDate: unified.startDate,
       risk,
       count: riskAware.length,
+      qualityAudit: {
+        accepted: qualityGate.accepted.length,
+        rejected: qualityGate.rejected.length
+      },
       timeRangeDays,
       marketUniverse: getMarketUniverseSummary(),
       matches: riskAware
@@ -3150,17 +4611,27 @@ app.post("/api/predict", async (req, res) => {
     const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
     const focusCountry = String(options.focusCountry || "Italia");
     const teamQuery = String(options.teamQuery || "");
+    const trackAllPredictions = String(options.trackAllPredictions ?? "1") !== "0";
+    const trackLimit = clamp(parseInputNumber(options.trackLimit, 50), 3, 200);
     const startDate = parseIsoDateInput(options.startDate, new Date());
     const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
+    const qualityGate = applyDataQualityGate(teamFiltered, {
+      startDate: unified.startDate,
+      timeRangeDays
+    });
     const riskAware = rankMatchesForRisk(
-      applyRiskProfileToMatches(teamFiltered, risk),
+      applyRiskProfileToMatches(qualityGate.accepted, risk),
       risk,
       maxMatches,
       focusCountry
     );
     const system = buildParachuteSystem(riskAware, options);
-    pushPredictionHistory(system, {
+    const trackableEvents = trackAllPredictions
+      ? buildTrackableEvents(riskAware, risk, trackLimit)
+      : system.selectedEvents || [];
+
+    pushPredictionHistory({ events: trackableEvents }, {
       sourceType: unified.source,
       focusCountry
     });
@@ -3176,6 +4647,15 @@ app.post("/api/predict", async (req, res) => {
       timeRangeDays,
       aiTraining: aiTrainingState,
       marketUniverse: getMarketUniverseSummary(),
+      tracking: {
+        trackAllPredictions,
+        trackLimit,
+        trackedEvents: trackableEvents.length
+      },
+      qualityAudit: {
+        accepted: qualityGate.accepted.length,
+        rejected: qualityGate.rejected.length
+      },
       system,
       llm
     });
@@ -3191,4 +4671,21 @@ app.listen(port, () => {
   console.log(`Predict app attiva su http://localhost:${port}`);
   loadAiMemory().catch(() => null);
   recalibrateAiFromRecentResults(30).catch(() => null);
+  if (TRAINING_CONFIG.autoEnabled) {
+    const intervalMs = Number(TRAINING_CONFIG.autoIntervalMs) > 0
+      ? Number(TRAINING_CONFIG.autoIntervalMs)
+      : Number(TRAINING_CONFIG.intervalHours || 24) * 60 * 60 * 1000;
+
+    setTimeout(() => {
+      runDailyAutoTraining().catch((error) => {
+        console.error("Daily auto training bootstrap error", error);
+      });
+    }, 12_000);
+
+    setInterval(() => {
+      runDailyAutoTraining().catch((error) => {
+        console.error("Daily auto training interval error", error);
+      });
+    }, intervalMs);
+  }
 });
