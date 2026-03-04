@@ -21,7 +21,12 @@ const aiTrainingState = {
 };
 const aiLearningState = {
   updatedAt: null,
-  marketOutcomes: {}
+  marketOutcomes: {},
+  swapOutcomes: {}
+};
+const externalSignalState = {
+  updatedAt: null,
+  byMatch: {}
 };
 const predictionHistory = [];
 const MAX_HISTORY_ITEMS = 20000;
@@ -35,6 +40,15 @@ const RETENTION_POLICY = {
   lowKeepRatio: 0.45,
   veryOldKeepRatio: 0.2
 };
+const QUALITY_CONFIG = {
+  minCandidateConf: 0.54,
+  minCandidateOdd: 1.35,
+  minMainScore: 0.62,
+  minMainConfidence: 0.56,
+  minMainOdd: 1.35,
+  maxPicksPerCoupon: 3
+};
+const MAX_EXTERNAL_SIGNALS = 50000;
 
 const MARKET_UNIVERSE = {
   esito: [
@@ -161,6 +175,178 @@ function normalizeWhitespace(value) {
 
 function normalizeSearchText(value) {
   return normalizeWhitespace(String(value || "")).toLowerCase();
+}
+
+function normalizeMatchSignalKey(match, matchDate = null, eventId = null) {
+  const dateToken = String(matchDate || "ND").slice(0, 10);
+  const eventToken = String(eventId || "").trim();
+  if (eventToken) {
+    return `event:${eventToken}`;
+  }
+  return `match:${normalizeSearchText(match || "")}|${dateToken}`;
+}
+
+function toSignalNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeSignalMap(input) {
+  if (!input || typeof input !== "object") {
+    return {};
+  }
+
+  const out = {};
+  for (const [market, value] of Object.entries(input)) {
+    const numeric = toSignalNumber(value, 0);
+    out[String(market)] = clamp(numeric, -0.2, 0.2);
+  }
+  return out;
+}
+
+function signalCompleteness(signal) {
+  if (!signal) {
+    return 0;
+  }
+  let count = 0;
+  const keys = [
+    "lineupConfirmed",
+    "unavailableHome",
+    "unavailableAway",
+    "suspendedHome",
+    "suspendedAway",
+    "rotationRiskHome",
+    "rotationRiskAway",
+    "xgEdgeHome",
+    "xgPace",
+    "oddsDriftHome"
+  ];
+
+  for (const key of keys) {
+    if (signal[key] !== null && signal[key] !== undefined) {
+      count += 1;
+    }
+  }
+
+  if (signal.marketConfidence && Object.keys(signal.marketConfidence).length) {
+    count += 2;
+  }
+  return clamp(count / 12, 0, 1);
+}
+
+function signalBoostForCandidate(signal, market) {
+  if (!signal || !market) {
+    return 0;
+  }
+
+  const marketAdjustment = Number(signal.marketConfidence?.[market] || 0);
+  const marketOddsAdjustment = Number(signal.marketOddsDrift?.[market] || 0);
+  const unavailableHome = toSignalNumber(signal.unavailableHome, 0);
+  const unavailableAway = toSignalNumber(signal.unavailableAway, 0);
+  const suspendedHome = toSignalNumber(signal.suspendedHome, 0);
+  const suspendedAway = toSignalNumber(signal.suspendedAway, 0);
+  const rotationRiskHome = clamp(toSignalNumber(signal.rotationRiskHome, 0), 0, 1);
+  const rotationRiskAway = clamp(toSignalNumber(signal.rotationRiskAway, 0), 0, 1);
+  const xgPace = toSignalNumber(signal.xgPace, 0);
+  const lineupConfirmed = Boolean(signal.lineupConfirmed);
+  const completeness = signalCompleteness(signal);
+
+  const absencesImpact = (unavailableHome + unavailableAway + suspendedHome + suspendedAway) * 0.002;
+  const rotationImpact = (rotationRiskHome + rotationRiskAway) * 0.02;
+  const paceBonus = /OVER|GG|MULTIGOAL/i.test(String(market))
+    ? clamp(xgPace * 0.015, -0.03, 0.03)
+    : /UNDER|NG/i.test(String(market))
+      ? clamp(-xgPace * 0.015, -0.03, 0.03)
+      : 0;
+
+  const generic = (lineupConfirmed ? 0.012 : -0.006) + completeness * 0.01 - absencesImpact - rotationImpact + paceBonus;
+  const finalBoost = generic + marketAdjustment + marketOddsAdjustment;
+  return Number(clamp(finalBoost, -0.14, 0.14).toFixed(4));
+}
+
+function upsertExternalSignals(items = []) {
+  let changed = 0;
+  for (const item of items) {
+    const key = normalizeMatchSignalKey(item.match, item.matchDate, item.eventId);
+    const normalized = {
+      source: String(item.source || "manual"),
+      match: String(item.match || ""),
+      matchDate: item.matchDate ? String(item.matchDate).slice(0, 10) : null,
+      eventId: item.eventId ? String(item.eventId) : null,
+      lineupConfirmed: item.lineupConfirmed === true,
+      unavailableHome: Math.max(0, Math.round(toSignalNumber(item.unavailableHome, 0))),
+      unavailableAway: Math.max(0, Math.round(toSignalNumber(item.unavailableAway, 0))),
+      suspendedHome: Math.max(0, Math.round(toSignalNumber(item.suspendedHome, 0))),
+      suspendedAway: Math.max(0, Math.round(toSignalNumber(item.suspendedAway, 0))),
+      rotationRiskHome: clamp(toSignalNumber(item.rotationRiskHome, 0), 0, 1),
+      rotationRiskAway: clamp(toSignalNumber(item.rotationRiskAway, 0), 0, 1),
+      xgEdgeHome: clamp(toSignalNumber(item.xgEdgeHome, 0), -3, 3),
+      xgPace: clamp(toSignalNumber(item.xgPace, 0), -3, 3),
+      oddsDriftHome: clamp(toSignalNumber(item.oddsDriftHome, 0), -0.2, 0.2),
+      marketConfidence: normalizeSignalMap(item.marketConfidence),
+      marketOddsDrift: normalizeSignalMap(item.marketOddsDrift),
+      updatedAt: new Date().toISOString()
+    };
+
+    externalSignalState.byMatch[key] = normalized;
+    if (normalized.eventId) {
+      const eventKey = normalizeMatchSignalKey(null, null, normalized.eventId);
+      externalSignalState.byMatch[eventKey] = normalized;
+    }
+    changed += 1;
+  }
+
+  const entries = Object.entries(externalSignalState.byMatch)
+    .sort((a, b) => Date.parse(b[1]?.updatedAt || 0) - Date.parse(a[1]?.updatedAt || 0))
+    .slice(0, MAX_EXTERNAL_SIGNALS);
+  externalSignalState.byMatch = Object.fromEntries(entries);
+  if (changed) {
+    externalSignalState.updatedAt = new Date().toISOString();
+  }
+  return changed;
+}
+
+function getExternalSignalForMatch(match, matchDate = null, eventId = null) {
+  const byEvent = eventId
+    ? externalSignalState.byMatch[normalizeMatchSignalKey(null, null, eventId)]
+    : null;
+  if (byEvent) {
+    return byEvent;
+  }
+
+  return externalSignalState.byMatch[normalizeMatchSignalKey(match, matchDate, null)] || null;
+}
+
+function externalSignalSummary(limit = 8) {
+  const rows = Object.values(externalSignalState.byMatch || {});
+  const uniqueRows = [];
+  const seen = new Set();
+
+  for (const row of rows) {
+    const key = normalizeMatchSignalKey(row.match, row.matchDate, row.eventId);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    uniqueRows.push(row);
+  }
+
+  const latest = [...uniqueRows]
+    .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))
+    .slice(0, limit)
+    .map((item) => ({
+      match: item.match,
+      matchDate: item.matchDate,
+      source: item.source,
+      lineupConfirmed: item.lineupConfirmed,
+      updatedAt: item.updatedAt
+    }));
+
+  return {
+    updatedAt: externalSignalState.updatedAt,
+    totalSignals: uniqueRows.length,
+    latest
+  };
 }
 
 function extractOdds(text) {
@@ -549,7 +735,8 @@ async function persistAiMemory() {
   const payload = {
     savedAt: new Date().toISOString(),
     predictionHistory: predictionHistory.slice(0, MAX_HISTORY_ITEMS),
-    aiLearningState
+    aiLearningState,
+    externalSignalState
   };
 
   await fs.mkdir(MEMORY_DIR, { recursive: true });
@@ -569,6 +756,13 @@ async function loadAiMemory() {
     if (storedLearning && typeof storedLearning === "object") {
       aiLearningState.updatedAt = storedLearning.updatedAt || null;
       aiLearningState.marketOutcomes = storedLearning.marketOutcomes || {};
+      aiLearningState.swapOutcomes = storedLearning.swapOutcomes || {};
+    }
+
+    const storedSignals = parsed.externalSignalState;
+    if (storedSignals && typeof storedSignals === "object") {
+      externalSignalState.updatedAt = storedSignals.updatedAt || null;
+      externalSignalState.byMatch = storedSignals.byMatch || {};
     }
   } catch {
     return;
@@ -595,6 +789,49 @@ function registerMarketOutcome(market, hit) {
   aiLearningState.updatedAt = new Date().toISOString();
 }
 
+function registerSwapOutcome(mainMarket, secondaryMarket, mainHit, secondaryHit) {
+  if (!mainMarket || !secondaryMarket) {
+    return;
+  }
+  if (typeof mainHit !== "boolean" || typeof secondaryHit !== "boolean") {
+    return;
+  }
+
+  const key = `${mainMarket}=>${secondaryMarket}`;
+  if (!aiLearningState.swapOutcomes[key]) {
+    aiLearningState.swapOutcomes[key] = {
+      winsIfSwap: 0,
+      total: 0,
+      swapRate: 0.5
+    };
+  }
+
+  const row = aiLearningState.swapOutcomes[key];
+  row.total += 1;
+  if (mainHit === false && secondaryHit === true) {
+    row.winsIfSwap += 1;
+  }
+  row.swapRate = Number(safeRate(row.winsIfSwap, row.total).toFixed(3));
+  aiLearningState.updatedAt = new Date().toISOString();
+}
+
+function swapPreference(mainMarket, secondaryMarket) {
+  if (!mainMarket || !secondaryMarket) {
+    return 0;
+  }
+
+  const key = `${mainMarket}=>${secondaryMarket}`;
+  const row = aiLearningState.swapOutcomes?.[key];
+  if (!row || Number(row.total || 0) < 3) {
+    return 0;
+  }
+
+  const rate = safeRate(row.winsIfSwap, row.total);
+  const confidence = clamp(row.total / 25, 0.15, 1);
+  const centered = rate - 0.5;
+  return Number((centered * 0.18 * confidence).toFixed(4));
+}
+
 function learningBoostForMarket(market) {
   const row = aiLearningState.marketOutcomes[market];
   if (!row || row.total < 3) {
@@ -609,6 +846,7 @@ function learningBoostForMarket(market) {
 
 function learningSummary() {
   const entries = Object.entries(aiLearningState.marketOutcomes || {});
+  const swapEntries = Object.entries(aiLearningState.swapOutcomes || {});
   const sorted = entries
     .filter(([, row]) => Number(row?.total || 0) >= 2)
     .sort((a, b) => Number(b[1]?.hitRate || 0) - Number(a[1]?.hitRate || 0))
@@ -622,6 +860,7 @@ function learningSummary() {
   return {
     updatedAt: aiLearningState.updatedAt,
     trackedMarkets: entries.length,
+    trackedSwapRules: swapEntries.length,
     memoryCap: MAX_HISTORY_ITEMS,
     retention: {
       fullDays: RETENTION_POLICY.keepDaysFull,
@@ -630,6 +869,69 @@ function learningSummary() {
     },
     topMarkets: sorted
   };
+}
+
+function marketReliability(market) {
+  const calibratedRate = Number(aiTrainingState.marketHitRates?.[market] || 0.5);
+  const learned = aiLearningState.marketOutcomes?.[market];
+  if (!learned || !Number(learned.total || 0)) {
+    return calibratedRate;
+  }
+
+  const learnedRate = Number(learned.hitRate || safeRate(learned.win, learned.total));
+  const learnedWeight = clamp(Number(learned.total || 0) / 40, 0.2, 0.75);
+  return Number((calibratedRate * (1 - learnedWeight) + learnedRate * learnedWeight).toFixed(4));
+}
+
+function dynamicMarketThreshold(market, risk) {
+  const family = marketFamily(market);
+  const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
+  const baseByFamily = {
+    esito: 0.58,
+    goal: 0.6,
+    multigol: 0.57,
+    combo: 0.63,
+    altro: 0.6
+  };
+
+  const base = Number(baseByFamily[family] || 0.6);
+  return clamp(base + conservativeWeight * 0.06, 0.54, 0.72);
+}
+
+function qualityScoreFromCandidate(candidate, risk, signal = null) {
+  const confidence = Number(candidate?.confidence || 0.5);
+  const odd = Number(candidate?.odd || 1.35);
+  const score = Number(candidate?.score || confidence);
+  const reliability = marketReliability(candidate?.market);
+  const signalBoost = signalBoostForCandidate(signal, candidate?.market);
+  const valuePart = clamp((odd - 1.3) / 2.7, 0, 0.25);
+  const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
+  return Number(
+    (
+      confidence * 0.42 +
+      score * 0.3 +
+      reliability * 0.22 +
+      valuePart * (0.06 + conservativeWeight * 0.03) +
+      signalBoost
+    ).toFixed(4)
+  );
+}
+
+function isCandidateHighQuality(candidate, risk, signal = null) {
+  if (!candidate) {
+    return false;
+  }
+
+  const confidence = Number(candidate.confidence || 0);
+  const odd = Number(candidate.odd || 0);
+  const threshold = dynamicMarketThreshold(candidate.market, risk);
+  const qualityScore = qualityScoreFromCandidate(candidate, risk, signal);
+
+  return (
+    confidence >= Math.max(QUALITY_CONFIG.minCandidateConf, threshold) &&
+    odd >= QUALITY_CONFIG.minCandidateOdd &&
+    qualityScore >= QUALITY_CONFIG.minMainScore
+  );
 }
 
 async function fetchJson(url) {
@@ -770,6 +1072,12 @@ async function refreshPredictionHistory(limit = 120) {
     if (item.status === "win" || item.status === "loss") {
       registerMarketOutcome(item.mainMarket, item.mainHit);
       registerMarketOutcome(item.secondaryMarket, item.secondaryHit);
+      registerSwapOutcome(
+        item.mainMarket,
+        item.secondaryMarket,
+        item.mainHit,
+        item.secondaryHit
+      );
       hasUpdates = true;
     }
   }
@@ -834,7 +1142,7 @@ function pushPredictionHistory(system, meta = {}) {
   persistAiMemory().catch(() => null);
 }
 
-async function recalibrateAiFromRecentResults(days = 30) {
+async function recalibrateAiFromRecentResults(days = 30, scope = "all") {
   const today = toStartOfDay(new Date());
   const stats = new Map();
 
@@ -851,7 +1159,8 @@ async function recalibrateAiFromRecentResults(days = 30) {
       const statusType = event?.status?.type;
       const isFinished = statusType === "finished" || statusType === "after_penalties";
       const isSerieA = /serie a/i.test(tournamentName) && /(italy|italia)/i.test(countryName);
-      if (!isSerieA || !isFinished) {
+      const isScopeAllowed = scope === "serieA" ? isSerieA : true;
+      if (!isScopeAllowed || !isFinished) {
         continue;
       }
 
@@ -881,6 +1190,123 @@ async function recalibrateAiFromRecentResults(days = 30) {
   aiTrainingState.sampleSize = sampleSize;
   aiTrainingState.marketHitRates = marketHitRates;
   return aiTrainingState;
+}
+
+async function runRollingBacktest({ days = 21, risk = 0.4, maxPerDay = 10, scope = "all", abstainMode = true } = {}) {
+  const today = toStartOfDay(new Date());
+  const formCache = new Map();
+  const marketStats = new Map();
+  const picks = [];
+  let abstained = 0;
+
+  for (let offset = days; offset >= 1; offset -= 1) {
+    const target = new Date(today);
+    target.setDate(today.getDate() - offset);
+    const payload = await fetchJson(`${sofaBaseUrl}/sport/football/scheduled-events/${toIsoDate(target)}`);
+    const events = payload?.events || [];
+
+    const finished = events
+      .filter((event) => {
+        const statusType = event?.status?.type;
+        const isFinished = statusType === "finished" || statusType === "after_penalties";
+        if (!isFinished) {
+          return false;
+        }
+        if (scope === "serieA") {
+          const tournamentName = event?.tournament?.uniqueTournament?.name || "";
+          const countryName = event?.tournament?.uniqueTournament?.category?.name || "";
+          return /serie a/i.test(tournamentName) && /(italy|italia)/i.test(countryName);
+        }
+        return true;
+      })
+      .slice(0, maxPerDay);
+
+    for (const event of finished) {
+      const homeTeamId = event?.homeTeam?.id;
+      const awayTeamId = event?.awayTeam?.id;
+      const homeName = event?.homeTeam?.name;
+      const awayName = event?.awayTeam?.name;
+      if (!homeTeamId || !awayTeamId || !homeName || !awayName) {
+        continue;
+      }
+
+      const [homeForm, awayForm] = await Promise.all([
+        fetchTeamForm(homeTeamId, formCache),
+        fetchTeamForm(awayTeamId, formCache)
+      ]);
+
+      const candidates = diversifyMarketCandidates(buildMarketCandidates(homeForm, awayForm), 14);
+      const signal = getExternalSignalForMatch(
+        `${homeName} vs ${awayName}`,
+        toIsoDate(target),
+        `sofa-${event.id}`
+      );
+      const chosen = pickTopMarkets(candidates, risk, signal);
+      const main = chosen.main;
+      if (!main) {
+        continue;
+      }
+
+      if (abstainMode && !isCandidateHighQuality(main, risk, signal)) {
+        abstained += 1;
+        continue;
+      }
+
+      const hits = marketHitsForEvent(event);
+      const hit = hits[main.market];
+      if (typeof hit !== "boolean") {
+        continue;
+      }
+
+      const item = {
+        date: toIsoDate(target),
+        match: `${homeName} vs ${awayName}`,
+        market: main.market,
+        odd: Number(main.odd || 0),
+        confidence: Number(main.confidence || 0),
+        hit
+      };
+      picks.push(item);
+
+      if (!marketStats.has(main.market)) {
+        marketStats.set(main.market, { win: 0, total: 0 });
+      }
+      const row = marketStats.get(main.market);
+      row.total += 1;
+      row.win += hit ? 1 : 0;
+    }
+  }
+
+  const total = picks.length;
+  const wins = picks.filter((item) => item.hit).length;
+  const accuracy = total ? Number((wins / total).toFixed(4)) : null;
+  const byMarket = [...marketStats.entries()]
+    .map(([market, row]) => ({
+      market,
+      total: row.total,
+      accuracy: Number((row.win / Math.max(1, row.total)).toFixed(4))
+    }))
+    .sort((a, b) => b.accuracy - a.accuracy);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    config: {
+      days,
+      risk,
+      maxPerDay,
+      scope,
+      abstainMode
+    },
+    summary: {
+      evaluatedPicks: total,
+      wins,
+      losses: total - wins,
+      abstained,
+      accuracy
+    },
+    byMarket,
+    recent: picks.slice(-20)
+  };
 }
 
 function normalizeTeamForm(form) {
@@ -1250,7 +1676,8 @@ async function fetchTeamForm(teamId, cache) {
   return form;
 }
 
-function chooseSafestMarket(candidates, risk) {
+function chooseSafestMarket(candidates, risk, context = {}) {
+  const signal = context?.signal || null;
   const safetyBias = {
     "1X": 0.06,
     X2: 0.06,
@@ -1319,23 +1746,26 @@ function chooseSafestMarket(candidates, risk) {
       const hitRate = Number(aiTrainingState.marketHitRates[item.market] || 0.5);
       const calibrationBoost = clamp((hitRate - 0.5) * 0.12, -0.03, 0.04);
       const adaptiveBoost = learningBoostForMarket(item.market);
+      const signalBoost = signalBoostForCandidate(signal, item.market);
       const score =
         item.confidence +
         conservativeWeight * (safetyBias[item.market] || 0.02) +
         valueWeight * oddValue +
         calibrationBoost +
-        adaptiveBoost;
+        adaptiveBoost +
+        signalBoost;
       return {
         ...item,
         hitRate,
         adaptiveBoost,
+        signalBoost,
         score: Number(score.toFixed(4))
       };
     })
     .sort((a, b) => b.score - a.score)[0];
 }
 
-function pickTopMarkets(candidates, risk) {
+function pickTopMarkets(candidates, risk, signal = null) {
   const lowValueMarkets = new Set([
     "OVER 0.5",
     "HOME OVER 0.5",
@@ -1351,41 +1781,73 @@ function pickTopMarkets(candidates, risk) {
       const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
       const valueWeight = clamp(risk, 0.05, 0.95) * 0.08;
       const oddValue = clamp((item.odd - 1.25) / 2.8, 0, 0.2);
-      const hitRate = Number(aiTrainingState.marketHitRates[item.market] || 0.5);
+      const hitRate = marketReliability(item.market);
       const calibrationBoost = clamp((hitRate - 0.5) * 0.12, -0.03, 0.04);
+      const adaptiveBoost = learningBoostForMarket(item.market);
+      const signalBoost = signalBoostForCandidate(signal, item.market);
       const safetyBias = marketStabilityBias(item.market) * 0.5;
       const score =
-        item.confidence + conservativeWeight * safetyBias + valueWeight * oddValue + calibrationBoost;
+        item.confidence +
+        conservativeWeight * safetyBias +
+        valueWeight * oddValue +
+        calibrationBoost +
+        adaptiveBoost +
+        signalBoost;
       return {
         ...item,
+        hitRate,
+        adaptiveBoost,
+        signalBoost,
+        qualityScore: qualityScoreFromCandidate(item, risk, signal),
         score: Number(score.toFixed(4))
       };
     })
     .filter((item) => !lowValueMarkets.has(item.market))
-    .filter((item) => item.odd >= 1.35)
-    .filter((item) => item.confidence >= (risk <= 0.35 ? 0.58 : 0.54))
+    .filter((item) => item.odd >= QUALITY_CONFIG.minCandidateOdd)
+    .filter((item) => item.confidence >= Math.max(QUALITY_CONFIG.minCandidateConf, dynamicMarketThreshold(item.market, risk)))
+    .filter((item) => item.qualityScore >= QUALITY_CONFIG.minMainScore)
     .sort((a, b) => b.score - a.score);
 
   const fallbackMain = [...valueCandidates]
-    .filter((item) => item.odd >= 1.35)
+    .filter((item) => item.odd >= QUALITY_CONFIG.minCandidateOdd)
     .sort((a, b) => {
       const scoreA = a.confidence + marketStabilityBias(a.market) * 0.35;
       const scoreB = b.confidence + marketStabilityBias(b.market) * 0.35;
       return scoreB - scoreA;
     })[0];
 
-  const main = scored[0] || fallbackMain || chooseSafestMarket(valueCandidates, risk);
+  const main = scored[0] || fallbackMain || chooseSafestMarket(valueCandidates, risk, { signal });
   const secondary =
     scored.find((item) => item.market !== main?.market) ||
     [...valueCandidates]
       .filter((item) => item.market !== main?.market)
-      .filter((item) => item.odd >= 1.35)
+      .filter((item) => item.odd >= QUALITY_CONFIG.minCandidateOdd)
       .sort((a, b) => b.confidence - a.confidence)[0] ||
     null;
 
+  let finalMain = main;
+  let finalSecondary = secondary;
+
+  if (main && secondary) {
+    const scoreGap = Number(main.score || main.confidence || 0) - Number(secondary.score || secondary.confidence || 0);
+    const swapBias = swapPreference(main.market, secondary.market);
+    const cautiousOverrideMarkets = new Set(["OVER 1.5", "OVER 2.5", "GG", "OVER 3.5"]);
+    const saferTargets = new Set(["12", "UNDER 3.5", "1X", "X2", "UNDER 2.5", "NG"]);
+    const shouldCautiousSwap =
+      risk <= 0.5 &&
+      cautiousOverrideMarkets.has(String(main.market)) &&
+      saferTargets.has(String(secondary.market)) &&
+      scoreGap <= 0.045;
+
+    if (swapBias > 0.02 || shouldCautiousSwap) {
+      finalMain = secondary;
+      finalSecondary = main;
+    }
+  }
+
   return {
-    main,
-    secondary
+    main: finalMain,
+    secondary: finalSecondary
   };
 }
 
@@ -1475,12 +1937,16 @@ function matchSelectionScore(match, risk) {
   const valuePart = valueBiasFromOdd(Number(match.odd || 1.7));
   const dayDistance = Math.abs(daysFromToday(match.matchDate));
   const datePriority = clamp(0.08 - dayDistance * 0.012, 0, 0.08);
+  const signal =
+    match.externalSignal || getExternalSignalForMatch(match.match, match.matchDate, match.id);
+  const signalBonus = signal ? signalBoostForCandidate(signal, match.mainPick || match.pick) : 0;
   return Number(
     (
       confidencePart +
       conservativeWeight * stability +
       valueWeight * valuePart +
-      datePriority
+      datePriority +
+      signalBonus
     ).toFixed(4)
   );
 }
@@ -1509,7 +1975,11 @@ function competitionPriorityBoost(match, focusCountry = "Italia") {
 
 function applyRiskProfileToMatches(matches, risk) {
   return matches.map((match) => {
-    const chosen = chooseSafestMarket(match.marketCandidates || [], risk);
+    const signal =
+      match.externalSignal ||
+      getExternalSignalForMatch(match.match, match.matchDate, match.id) ||
+      null;
+    const chosen = chooseSafestMarket(match.marketCandidates || [], risk, { signal });
     if (!chosen) {
       return {
         ...match,
@@ -1525,6 +1995,7 @@ function applyRiskProfileToMatches(matches, risk) {
       odd: chosen.odd,
       confidence: chosen.confidence,
       safetyScore: chosen.score,
+      externalSignal: signal,
       selectionReason: chosen.rationale
     };
   });
@@ -1549,6 +2020,7 @@ async function fetchSofascoreFootball(
 ) {
   const today = toStartOfDay(referenceDate);
   const formCache = new Map();
+  const lineupCache = new Map();
   const events = [];
 
   for (let offset = 0; offset < days; offset += 1) {
@@ -1609,9 +2081,57 @@ async function fetchSofascoreFootball(
       fetchTeamForm(homeTeamId, formCache),
       fetchTeamForm(awayTeamId, formCache)
     ]);
+    const signalFromMemory = getExternalSignalForMatch(
+      `${homeTeamName} vs ${awayTeamName}`,
+      toIsoDate(eventDate),
+      `sofa-${event.id}`
+    );
+
+    if (!lineupCache.has(event.id)) {
+      const lineupPayload = await fetchJson(`${sofaBaseUrl}/event/${event.id}/lineups`);
+      lineupCache.set(event.id, lineupPayload || null);
+    }
+    const lineupPayload = lineupCache.get(event.id);
+    const lineupSignal =
+      lineupPayload && !lineupPayload.error
+        ? {
+            source: "sofascore-lineups",
+            match: `${homeTeamName} vs ${awayTeamName}`,
+            matchDate: toIsoDate(eventDate),
+            eventId: `sofa-${event.id}`,
+            lineupConfirmed: Boolean(lineupPayload.confirmed),
+            unavailableHome: Number(lineupPayload?.home?.missingPlayers?.length || 0),
+            unavailableAway: Number(lineupPayload?.away?.missingPlayers?.length || 0),
+            suspendedHome: 0,
+            suspendedAway: 0,
+            rotationRiskHome: 0,
+            rotationRiskAway: 0,
+            xgEdgeHome: 0,
+            xgPace: 0,
+            oddsDriftHome: 0,
+            marketConfidence: {},
+            marketOddsDrift: {}
+          }
+        : null;
+
+    if (lineupSignal) {
+      upsertExternalSignals([lineupSignal]);
+    }
+    const externalSignal =
+      signalFromMemory ||
+      (lineupSignal
+        ? getExternalSignalForMatch(
+            `${homeTeamName} vs ${awayTeamName}`,
+            toIsoDate(eventDate),
+            `sofa-${event.id}`
+          )
+        : null);
+
     const marketCandidates = buildMarketCandidates(homeForm, awayForm);
     const diversifiedCandidates = diversifyMarketCandidates(marketCandidates, 14);
-    const predicted = chooseSafestMarket(diversifiedCandidates, 0.1);
+    const predicted = chooseSafestMarket(diversifiedCandidates, 0.1, {
+      signal: externalSignal
+    });
 
     const kickoff = toKickoffFromDate(eventDate);
     picks.push({
@@ -1623,6 +2143,7 @@ async function fetchSofascoreFootball(
       confidence: predicted.confidence,
       selectionReason: predicted.rationale,
       safetyScore: predicted.score,
+      externalSignal,
       marketCandidates: diversifiedCandidates,
       matchday: event?.roundInfo?.round
         ? `Giornata ${event.roundInfo.round}`
@@ -1865,12 +2386,15 @@ function buildParachuteSystem(matches, options) {
   const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
   const riskInput = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
   const precisionMode = String(options.precisionMode ?? "1") !== "0";
+  const abstainMode = String(options.abstainMode ?? "1") !== "0";
   const risk = precisionMode ? clamp(riskInput * 0.9, 0.05, 0.85) : riskInput;
   const minStakeUnit = clamp(parseInputNumber(options.minStake, 1), 0.5, 5);
 
   const enriched = matches
     .map((match, index) => {
-      const chosen = pickTopMarkets(match.marketCandidates || [], risk);
+      const signal =
+        match.externalSignal || getExternalSignalForMatch(match.match, match.matchDate, match.id);
+      const chosen = pickTopMarkets(match.marketCandidates || [], risk, signal);
       const bestMarket = chosen.main;
       const secondaryMarket = chosen.secondary;
       const odd = Number(bestMarket?.odd || match.odd) || null;
@@ -1894,14 +2418,23 @@ function buildParachuteSystem(matches, options) {
         confidence,
         secondaryConfidence: Number(secondaryMarket?.confidence || clamp(confidence + 0.08, 0.35, 0.92)),
         safetyScore: Number(bestMarket?.score || confidence),
+        qualityScore: qualityScoreFromCandidate(
+          bestMarket || { confidence, odd, market: mainPick, score: confidence },
+          risk,
+          signal
+        ),
         selectionReason: bestMarket?.rationale || match.selectionReason || "Scelta prudenziale su confidenza stimata.",
         marketCandidates: (match.marketCandidates || []).slice(0, 5),
+        externalSignal: signal,
         selectionScore: matchSelectionScore(
           {
+            id: match.id,
+            match: match.match,
             mainPick,
             confidence,
             odd,
-            matchDate: match.matchDate
+            matchDate: match.matchDate,
+            externalSignal: signal
           },
           risk
         ),
@@ -1914,16 +2447,38 @@ function buildParachuteSystem(matches, options) {
     })
     .sort((a, b) => b.selectionScore - a.selectionScore);
 
-  const aligned = chooseAlignedPool(enriched.slice(0, maxMatches));
+  const highQualityPool = enriched.filter((item) => {
+    if (!abstainMode) {
+      return true;
+    }
+
+    const candidate = {
+      market: item.mainPick,
+      confidence: item.confidence,
+      odd: item.odd,
+      score: item.safetyScore
+    };
+    return (
+      isCandidateHighQuality(candidate, risk, item.externalSignal || null) &&
+      item.qualityScore >= QUALITY_CONFIG.minMainScore &&
+      item.confidence >= QUALITY_CONFIG.minMainConfidence &&
+      Number(item.odd || 0) >= QUALITY_CONFIG.minMainOdd
+    );
+  });
+
+  const candidatePool = highQualityPool.length >= 3 ? highQualityPool : enriched;
+  const abstainedMatches = Math.max(0, enriched.length - candidatePool.length);
+
+  const aligned = chooseAlignedPool(candidatePool.slice(0, maxMatches));
 
   let selectedForSystem = aligned.pool
     .sort((a, b) => b.selectionScore - a.selectionScore)
-    .slice(0, 3);
+    .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
 
   if (selectedForSystem.length < 3) {
     const fromCurrentWindow = [...enriched]
       .sort((a, b) => b.selectionScore - a.selectionScore)
-      .slice(0, 3);
+      .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
 
     if (fromCurrentWindow.length >= 3) {
       selectedForSystem = fromCurrentWindow;
@@ -1955,7 +2510,7 @@ function buildParachuteSystem(matches, options) {
           source: item.source
         }))
         .sort((a, b) => b.selectionScore - a.selectionScore)
-        .slice(0, 3);
+        .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
       selectedForSystem = fallbackAligned;
     }
   }
@@ -2056,7 +2611,8 @@ function buildParachuteSystem(matches, options) {
       odd: item.odd,
       secondaryOdd: item.secondaryOdd,
       confidence: item.confidence,
-      safetyScore: item.safetyScore
+      safetyScore: item.safetyScore,
+      qualityScore: item.qualityScore
     })),
     risk,
     bankroll,
@@ -2076,7 +2632,25 @@ function buildParachuteSystem(matches, options) {
         minStakeUnit,
         activeTickets: activeSuccess.length,
         precisionMode,
+        abstainMode,
         effectiveRisk: Number(risk.toFixed(3))
+      },
+      quality: {
+        highQualityPool: highQualityPool.length,
+        candidatePool: candidatePool.length,
+        abstainedMatches,
+        minScore: QUALITY_CONFIG.minMainScore,
+        minConfidence: QUALITY_CONFIG.minMainConfidence,
+        minOdd: QUALITY_CONFIG.minMainOdd,
+        avgQualityScore:
+          selectedForSystem.length > 0
+            ? Number(
+                (
+                  selectedForSystem.reduce((acc, item) => acc + Number(item.qualityScore || 0), 0) /
+                  selectedForSystem.length
+                ).toFixed(4)
+              )
+            : 0
       },
       alignment: {
         matchday: selectedForSystem[0]?.matchday || "Giornata ND",
@@ -2100,6 +2674,7 @@ function buildParachuteSystem(matches, options) {
       "Copertura distribuita su tutte le partite con ticket hedge dedicati.",
       "Stake allocato in proporzione alla probabilità dei ticket attivi.",
       `Piano budget: investiti ${Number(investableBudget.toFixed(2))}€ su ticket con quota minima utile; riserva ${reserveStake}€ per protezione.`,
+      `Filtro qualità: ${candidatePool.length}/${enriched.length} eventi ammessi (abstain ${abstainedMatches}).`,
       "Vincolo EV non negativo: se EV<0 la quota resta in riserva prudente.",
       "Le probabilità sono stime e non garantiscono profitto.",
       "Verifica sempre quote aggiornate prima di giocare."
@@ -2317,9 +2892,51 @@ app.get("/api/health", (_, res) => {
     sofaBaseUrl,
     aiTraining: aiTrainingState,
     aiLearning: learningSummary(),
+    externalSignals: externalSignalSummary(),
+    qualityConfig: QUALITY_CONFIG,
     predictionHistory: summary,
     marketUniverse: getMarketUniverseSummary()
   });
+});
+
+app.get("/api/signals/external", (req, res) => {
+  const limit = clamp(parseInputNumber(req.query?.limit, 50), 1, 500);
+  const rows = Object.values(externalSignalState.byMatch || {})
+    .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))
+    .slice(0, limit);
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    summary: externalSignalSummary(),
+    items: rows
+  });
+});
+
+app.post("/api/signals/external", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) {
+      return res.status(400).json({
+        error: "Nessun segnale ricevuto.",
+        detail: "Invia un array 'items' con almeno un elemento."
+      });
+    }
+
+    const changed = upsertExternalSignals(items);
+    await persistAiMemory();
+
+    return res.json({
+      ok: true,
+      changed,
+      summary: externalSignalSummary()
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Errore ingest segnali esterni.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
 });
 
 app.get("/api/predictions/history", async (req, res) => {
@@ -2335,6 +2952,7 @@ app.get("/api/predictions/history", async (req, res) => {
       generatedAt: new Date().toISOString(),
       summary: createHistorySummary(items),
       learning: learningSummary(),
+      externalSignals: externalSignalSummary(5),
       items
     });
   } catch (error) {
@@ -2349,15 +2967,46 @@ app.post("/api/train/recalibrate", async (req, res) => {
   try {
     const body = req.body || {};
     const days = clamp(parseInputNumber(body.days, 30), 7, 90);
-    const training = await recalibrateAiFromRecentResults(days);
+    const scope = String(body.scope || "all");
+    const training = await recalibrateAiFromRecentResults(days, scope === "serieA" ? "serieA" : "all");
     res.json({
       ok: true,
       days,
+      scope,
       training
     });
   } catch (error) {
     res.status(500).json({
       error: "Errore durante ricalibrazione AI.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
+app.post("/api/train/backtest", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const days = clamp(parseInputNumber(body.days, 21), 7, 60);
+    const risk = clamp(parseInputNumber(body.risk, 0.4), 0.05, 0.95);
+    const maxPerDay = clamp(parseInputNumber(body.maxPerDay, 10), 3, 30);
+    const scope = String(body.scope || "all");
+    const abstainMode = String(body.abstainMode ?? "1") !== "0";
+
+    const result = await runRollingBacktest({
+      days,
+      risk,
+      maxPerDay,
+      scope: scope === "serieA" ? "serieA" : "all",
+      abstainMode
+    });
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Errore durante backtest rolling.",
       detail: error instanceof Error ? error.message : "Errore sconosciuto"
     });
   }
