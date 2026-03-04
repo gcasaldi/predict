@@ -125,9 +125,19 @@ const oddsScrapingState = {
 const PUBLIC_PIPELINE_CONFIG = {
   autoEnabled: true,
   intervalMs: 24 * 60 * 60 * 1000,
-  maxWarehouseRows: 50000,
+  maxWarehouseRows: 120000,
   maxUnderstatMatchDetails: 220,
-  footballDataLeagues: ["I1", "E0", "D1", "SP1", "F1"],
+  footballDataSeasonsBack: 22,
+  minTrainingRows: 50000,
+  footballDataLeagues: [
+    "E0", "E1", "E2", "E3", "EC",
+    "SC0", "SC1", "SC2", "SC3",
+    "D1", "D2",
+    "SP1", "SP2",
+    "I1", "I2",
+    "F1", "F2",
+    "N1", "B1", "P1", "T1", "G1"
+  ],
   understatLeagues: ["serie_a", "epl", "bundesliga", "la_liga", "ligue_1"],
   fbrefLeagues: [
     "it/Serie-A",
@@ -1629,6 +1639,40 @@ function backupPickFor(pick) {
   return map[pick] || "1X";
 }
 
+function marketOutcomeSet(market) {
+  const key = String(market || "").toUpperCase().trim();
+  if (key === "1" || key.startsWith("1 +")) {
+    return new Set(["H"]);
+  }
+  if (key === "X") {
+    return new Set(["D"]);
+  }
+  if (key === "2") {
+    return new Set(["A"]);
+  }
+  if (key === "1X" || key.startsWith("1X +")) {
+    return new Set(["H", "D"]);
+  }
+  if (key === "X2") {
+    return new Set(["D", "A"]);
+  }
+  if (key === "12") {
+    return new Set(["H", "A"]);
+  }
+  return new Set(["H", "D", "A"]);
+}
+
+function areMarketsCompatible(firstMarket, secondMarket) {
+  const first = marketOutcomeSet(firstMarket);
+  const second = marketOutcomeSet(secondMarket);
+  for (const value of first) {
+    if (second.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function oddForPick(baseOdd, isBackup) {
   if (!baseOdd) {
     return isBackup ? 1.38 : 1.68;
@@ -2338,7 +2382,7 @@ async function recalibrateAiFromRecentResults(days = 30, scope = "all") {
   const minDateIso = minDate.toISOString().slice(0, 10);
 
   const rows = (publicDataWarehouseState.rows || []).filter((row) => {
-    if (!row.complete) {
+    if (!row.complete || !row.has_result) {
       return false;
     }
     if (scope === "serieA" && row.league !== "I1") {
@@ -2389,7 +2433,7 @@ async function runRollingBacktest({ days = 21, risk = 0.4, maxPerDay = 10, scope
 
   const eligible = (publicDataWarehouseState.rows || [])
     .filter((row) => {
-      if (!row.complete) {
+      if (!row.complete || !row.has_result) {
         return false;
       }
       if (scope === "serieA" && row.league !== "I1") {
@@ -2514,6 +2558,18 @@ function currentSeasonToken(referenceDate = new Date()) {
   const startYear = month >= 7 ? year : year - 1;
   const endYear = startYear + 1;
   return `${String(startYear).slice(-2)}${String(endYear).slice(-2)}`;
+}
+
+function footballDataSeasonTokens(referenceDate = new Date(), seasonsBack = 10) {
+  const currentToken = currentSeasonToken(referenceDate);
+  const currentStartYear = 2000 + Number(String(currentToken).slice(0, 2));
+  const output = [];
+  for (let offset = 0; offset < Math.max(1, Number(seasonsBack || 1)); offset += 1) {
+    const startYear = currentStartYear - offset;
+    const endYear = startYear + 1;
+    output.push(`${String(startYear).slice(-2)}${String(endYear).slice(-2)}`);
+  }
+  return output;
 }
 
 function currentOpenfootballSeason(referenceDate = new Date()) {
@@ -2721,6 +2777,17 @@ function buildLambdasFromRow(row) {
   };
 }
 
+function stabilizeMarketProbability(probability, market) {
+  const raw = clamp(Number(probability || 0), 0.001, 0.999);
+  const historical = Number(aiTrainingState.marketHitRates?.[market]);
+  const prior = Number.isFinite(historical) ? clamp(historical, 0.05, 0.95) : 0.5;
+  const sample = Number(aiTrainingState.sampleSize || 0);
+  const confidenceWeight = clamp(sample / 80000, 0.18, 0.82);
+  const blended = raw * confidenceWeight + prior * (1 - confidenceWeight);
+  const damped = 0.5 + (blended - 0.5) * 0.9;
+  return Number(clamp(damped, 0.02, 0.98).toFixed(4));
+}
+
 function buildMarketOutputForMatch(match, row = {}) {
   const [homeTeam = "", awayTeam = ""] = String(match?.match || "").split(/\s+vs\s+/i);
   const lambdas = buildLambdasFromRow(row);
@@ -2731,7 +2798,7 @@ function buildMarketOutputForMatch(match, row = {}) {
     .map(([market, probability]) => ({
       market,
       market_key: normalizeMarketKeyForOutput(market),
-      probability: Number(clamp(Number(probability || 0), 0, 1).toFixed(4))
+      probability: stabilizeMarketProbability(probability, market)
     }))
     .sort((a, b) => b.probability - a.probability);
 
@@ -2739,9 +2806,15 @@ function buildMarketOutputForMatch(match, row = {}) {
     .filter((item) => item.probability > 0.55)
     .sort((a, b) => b.probability - a.probability);
 
-  const recommendedOptions = (topPredictions.length >= 3
+  const trainingRows = Number(publicDataWarehouseState.summary?.trainingEligibleRows || 0);
+  const safetyLevel = trainingRows >= 120000 ? "HIGH" : trainingRows >= 50000 ? "MEDIUM" : "LOW";
+
+  const poolForRecommended = (topPredictions.length >= 3
     ? topPredictions
-    : predictions.slice(0, 5))
+    : predictions.slice(0, 8));
+  const anchorMarket = poolForRecommended[0]?.market || predictions[0]?.market || null;
+  const recommendedOptions = poolForRecommended
+    .filter((item) => (anchorMarket ? areMarketsCompatible(anchorMarket, item.market) : true))
     .slice(0, 5)
     .map((item) => ({ market: item.market, probability: item.probability }));
 
@@ -2759,6 +2832,7 @@ function buildMarketOutputForMatch(match, row = {}) {
     away_team: awayTeam,
     lambda_home: lambdas.lambdaHome,
     lambda_away: lambdas.lambdaAway,
+    safety_level: safetyLevel,
     predictions,
     top_predictions: topPredictions,
     recommended_options: recommendedOptions,
@@ -3204,51 +3278,66 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
 
   const footballRows = [];
   const footballSummary = defaultIngestionSource();
-  const season = currentSeasonToken(referenceDate);
+  const seasons = footballDataSeasonTokens(referenceDate, PUBLIC_PIPELINE_CONFIG.footballDataSeasonsBack);
 
-  for (const league of PUBLIC_PIPELINE_CONFIG.footballDataLeagues) {
-    const url = `https://www.football-data.co.uk/mmz4281/${season}/${league}.csv`;
-    const payload = await fetchText(url);
-    if (!payload.ok) {
-      footballSummary.httpErrors += 1;
-      footballSummary.rateLimited = footballSummary.rateLimited || payload.status === 429;
-      continue;
-    }
-    const rows = parseCsvRows(payload.text);
-    footballSummary.rowsFetched += rows.length;
-
-    for (const row of rows) {
-      const date = footballDataDateToIso(row.Date);
-      const homeTeam = String(row.HomeTeam || "").trim();
-      const awayTeam = String(row.AwayTeam || "").trim();
-      const homeGoals = Number(row.FTHG);
-      const awayGoals = Number(row.FTAG);
-      const odds1 = Number(row.B365H || row.PSH || row.MaxH || null);
-      const oddsX = Number(row.B365D || row.PSD || row.MaxD || null);
-      const odds2 = Number(row.B365A || row.PSA || row.MaxA || null);
-
-      const hasOdds = [odds1, oddsX, odds2].every((value) => Number.isFinite(value) && value > 1.01);
-      if (!date || !homeTeam || !awayTeam || !hasOdds) {
-        footballSummary.parseErrors += 1;
+  for (const season of seasons) {
+    for (const league of PUBLIC_PIPELINE_CONFIG.footballDataLeagues) {
+      const url = `https://www.football-data.co.uk/mmz4281/${season}/${league}.csv`;
+      const payload = await fetchText(url);
+      if (!payload.ok) {
+        footballSummary.httpErrors += 1;
+        footballSummary.rateLimited = footballSummary.rateLimited || payload.status === 429;
         continue;
       }
+      const rows = parseCsvRows(payload.text);
+      footballSummary.rowsFetched += rows.length;
 
-      footballRows.push({
-        league,
-        season,
-        date,
-        homeTeam,
-        awayTeam,
-        homeGoals: Number.isFinite(homeGoals) ? homeGoals : null,
-        awayGoals: Number.isFinite(awayGoals) ? awayGoals : null,
-        odds1,
-        oddsX,
-        odds2
-      });
-      footballSummary.rowsParsed += 1;
+      for (const row of rows) {
+        const date = footballDataDateToIso(row.Date);
+        const homeTeam = String(row.HomeTeam || "").trim();
+        const awayTeam = String(row.AwayTeam || "").trim();
+        const homeGoals = Number(row.FTHG);
+        const awayGoals = Number(row.FTAG);
+        const odds1 = Number(row.B365H || row.PSH || row.MaxH || null);
+        const oddsX = Number(row.B365D || row.PSD || row.MaxD || null);
+        const odds2 = Number(row.B365A || row.PSA || row.MaxA || null);
+
+        const hasOdds = [odds1, oddsX, odds2].every((value) => Number.isFinite(value) && value > 1.01);
+        if (!date || !homeTeam || !awayTeam || !hasOdds) {
+          footballSummary.parseErrors += 1;
+          continue;
+        }
+
+        footballRows.push({
+          league,
+          season,
+          date,
+          homeTeam,
+          awayTeam,
+          homeGoals: Number.isFinite(homeGoals) ? homeGoals : null,
+          awayGoals: Number.isFinite(awayGoals) ? awayGoals : null,
+          odds1,
+          oddsX,
+          odds2
+        });
+        footballSummary.rowsParsed += 1;
+      }
     }
   }
-  footballSummary.rowsInserted = footballRows.length;
+
+  const dedupFootball = new Map();
+  for (const row of footballRows) {
+    const key = buildPublicMatchId({
+      league: row.league,
+      season: row.season,
+      date: row.date,
+      homeTeam: row.homeTeam,
+      awayTeam: row.awayTeam
+    });
+    dedupFootball.set(key, row);
+  }
+  const uniqueFootballRows = [...dedupFootball.values()];
+  footballSummary.rowsInserted = uniqueFootballRows.length;
   footballSummary.sourceLatencyMs = Date.now() - started;
 
   const understat = await ingestUnderstatSnapshot(referenceDate);
@@ -3259,7 +3348,7 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
   const oddsRows = Array.isArray(oddsportal.rows) ? oddsportal.rows : oddsScrapingState.rows;
 
   const joinedRows = joinPublicDataWarehouse({
-    footballRows,
+    footballRows: uniqueFootballRows,
     understatRows: understat.rows,
     fbrefTeamStats: fbref.teamStats,
     oddsRows
@@ -3267,6 +3356,9 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
 
   const completeRows = joinedRows.filter((item) => item.complete).length;
   const quoteCompleteRows = joinedRows.filter((item) => hasRequiredQuoteFields(item)).length;
+  const trainingEligibleRows = joinedRows.filter(
+    (item) => item.complete && item.has_result && Number.isFinite(Number(item.home_goals)) && Number.isFinite(Number(item.away_goals))
+  ).length;
 
   publicDataWarehouseState.rows = joinedRows
     .sort((a, b) => String(b.match_date).localeCompare(String(a.match_date)))
@@ -3282,9 +3374,10 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
       ...(oddsScrapingState.summary || defaultIngestionSource()),
       source: "oddsportal"
     },
-    matches_scraped: footballRows.length,
+    matches_scraped: uniqueFootballRows.length,
     matches_with_odds: quoteCompleteRows,
     matches_after_filters: completeRows,
+    trainingEligibleRows,
     joinedRows: joinedRows.length,
     completeRows,
     quoteCompleteRows
@@ -3510,8 +3603,8 @@ async function runDailyAutoTraining({ trigger = "cron" } = {}) {
     const oddsportal = publicDataWarehouseState.summary.oddsportal || defaultIngestionSource();
     const openfootball = await ingestOpenfootballSnapshot(new Date());
     const statsMap = new Map();
-    for (const row of publicDataWarehouseState.rows.slice(0, 10000)) {
-      if (!row.complete || !Number.isFinite(Number(row.home_goals)) || !Number.isFinite(Number(row.away_goals))) {
+    for (const row of publicDataWarehouseState.rows) {
+      if (!row.complete || !row.has_result || !Number.isFinite(Number(row.home_goals)) || !Number.isFinite(Number(row.away_goals))) {
         continue;
       }
       const event = {
@@ -3530,6 +3623,20 @@ async function runDailyAutoTraining({ trigger = "cron" } = {}) {
     }
     if (statsMap.size) {
       mergeTrainingStatsIntoAi(statsMap);
+    }
+
+    const trainingEligibleRows = Number(publicDataWarehouseState.summary?.trainingEligibleRows || 0);
+    if (trainingEligibleRows < PUBLIC_PIPELINE_CONFIG.minTrainingRows) {
+      pushMonitorAlert(
+        "training",
+        "Campione training insufficiente per stabilità elevata",
+        {
+          trainingEligibleRows,
+          minimumRequired: PUBLIC_PIPELINE_CONFIG.minTrainingRows
+        },
+        "critical",
+        "TRAINING_SAMPLE_TOO_LOW"
+      );
     }
 
     jobReport.ingestion.understat = understat;
@@ -4320,9 +4427,10 @@ function pickTopMarkets(candidates, risk, signal = null) {
 
   const main = scored[0] || fallbackMain || chooseSafestMarket(valueCandidates, risk, { signal });
   const secondary =
-    scored.find((item) => item.market !== main?.market) ||
+    scored.find((item) => item.market !== main?.market && areMarketsCompatible(main?.market, item.market)) ||
     [...valueCandidates]
       .filter((item) => item.market !== main?.market)
+      .filter((item) => areMarketsCompatible(main?.market, item.market))
       .filter((item) => item.odd >= QUALITY_CONFIG.minCandidateOdd)
       .sort((a, b) => b.confidence - a.confidence)[0] ||
     null;
