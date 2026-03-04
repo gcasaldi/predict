@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import * as cheerio from "cheerio";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -17,8 +19,22 @@ const aiTrainingState = {
   sampleSize: 0,
   marketHitRates: {}
 };
+const aiLearningState = {
+  updatedAt: null,
+  marketOutcomes: {}
+};
 const predictionHistory = [];
-const MAX_HISTORY_ITEMS = 500;
+const MAX_HISTORY_ITEMS = 20000;
+const MEMORY_DIR = path.join(process.cwd(), "data");
+const MEMORY_FILE = path.join(MEMORY_DIR, "ai-memory.json");
+const RETENTION_POLICY = {
+  keepDaysFull: 120,
+  keepDaysMedium: 240,
+  keepDaysLow: 540,
+  mediumKeepRatio: 0.8,
+  lowKeepRatio: 0.45,
+  veryOldKeepRatio: 0.2
+};
 
 const MARKET_UNIVERSE = {
   esito: [
@@ -438,6 +454,184 @@ function parseSofaEventId(rawId) {
   return Number(match[1]);
 }
 
+function safeRate(hit, total) {
+  if (!total) {
+    return 0.5;
+  }
+  return clamp(hit / total, 0.05, 0.95);
+}
+
+function historyDedupKey(item) {
+  return [
+    String(item.eventId || item.match || "ND"),
+    String(item.matchDate || "ND"),
+    String(item.mainMarket || "ND"),
+    String(item.secondaryMarket || "ND")
+  ].join("|");
+}
+
+function stableHash(value) {
+  const str = String(value || "");
+  let hash = 0;
+  for (let index = 0; index < str.length; index += 1) {
+    hash = (hash * 31 + str.charCodeAt(index)) % 1000000007;
+  }
+  return Math.abs(hash);
+}
+
+function daysSince(isoDate) {
+  if (!isoDate) {
+    return 99999;
+  }
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return 99999;
+  }
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - parsed.getTime()) / 86400000));
+}
+
+function shouldRetainHistoryItem(item) {
+  if (item.status === "pending") {
+    return true;
+  }
+
+  const ageDays = daysSince(item.matchDate || item.generatedAt);
+  if (ageDays <= RETENTION_POLICY.keepDaysFull) {
+    return true;
+  }
+
+  const basis = `${item.eventId || item.match}|${item.mainMarket}|${item.generatedAt || ""}`;
+  const bucket = stableHash(basis) % 10000;
+  const keepByRatio = (ratio) => bucket < Math.floor(ratio * 10000);
+
+  if (ageDays <= RETENTION_POLICY.keepDaysMedium) {
+    return keepByRatio(RETENTION_POLICY.mediumKeepRatio);
+  }
+
+  if (ageDays <= RETENTION_POLICY.keepDaysLow) {
+    return keepByRatio(RETENTION_POLICY.lowKeepRatio);
+  }
+
+  return keepByRatio(RETENTION_POLICY.veryOldKeepRatio);
+}
+
+function applyGradualHistoryRetention() {
+  const retained = predictionHistory.filter((item) => shouldRetainHistoryItem(item));
+
+  retained.sort((a, b) => {
+    const timeA = Date.parse(a.generatedAt || 0) || 0;
+    const timeB = Date.parse(b.generatedAt || 0) || 0;
+    return timeB - timeA;
+  });
+
+  predictionHistory.splice(0, predictionHistory.length, ...retained.slice(0, MAX_HISTORY_ITEMS));
+}
+
+function dedupePredictionHistory() {
+  const seen = new Set();
+  const deduped = [];
+
+  for (const item of predictionHistory) {
+    const key = historyDedupKey(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(item);
+  }
+
+  predictionHistory.splice(0, predictionHistory.length, ...deduped);
+  applyGradualHistoryRetention();
+}
+
+async function persistAiMemory() {
+  const payload = {
+    savedAt: new Date().toISOString(),
+    predictionHistory: predictionHistory.slice(0, MAX_HISTORY_ITEMS),
+    aiLearningState
+  };
+
+  await fs.mkdir(MEMORY_DIR, { recursive: true });
+  await fs.writeFile(MEMORY_FILE, JSON.stringify(payload, null, 2), "utf-8");
+}
+
+async function loadAiMemory() {
+  try {
+    const raw = await fs.readFile(MEMORY_FILE, "utf-8");
+    const parsed = JSON.parse(raw || "{}");
+
+    const items = Array.isArray(parsed.predictionHistory) ? parsed.predictionHistory : [];
+    predictionHistory.splice(0, predictionHistory.length, ...items.slice(0, MAX_HISTORY_ITEMS));
+    dedupePredictionHistory();
+
+    const storedLearning = parsed.aiLearningState;
+    if (storedLearning && typeof storedLearning === "object") {
+      aiLearningState.updatedAt = storedLearning.updatedAt || null;
+      aiLearningState.marketOutcomes = storedLearning.marketOutcomes || {};
+    }
+  } catch {
+    return;
+  }
+}
+
+function registerMarketOutcome(market, hit) {
+  if (typeof hit !== "boolean" || !market) {
+    return;
+  }
+
+  if (!aiLearningState.marketOutcomes[market]) {
+    aiLearningState.marketOutcomes[market] = {
+      win: 0,
+      total: 0,
+      hitRate: 0.5
+    };
+  }
+
+  const row = aiLearningState.marketOutcomes[market];
+  row.total += 1;
+  row.win += hit ? 1 : 0;
+  row.hitRate = Number(safeRate(row.win, row.total).toFixed(3));
+  aiLearningState.updatedAt = new Date().toISOString();
+}
+
+function learningBoostForMarket(market) {
+  const row = aiLearningState.marketOutcomes[market];
+  if (!row || row.total < 3) {
+    return 0;
+  }
+
+  const rate = safeRate(row.win, row.total);
+  const sampleWeight = clamp(row.total / 30, 0.15, 1);
+  const centered = rate - 0.5;
+  return Number((centered * 0.14 * sampleWeight).toFixed(4));
+}
+
+function learningSummary() {
+  const entries = Object.entries(aiLearningState.marketOutcomes || {});
+  const sorted = entries
+    .filter(([, row]) => Number(row?.total || 0) >= 2)
+    .sort((a, b) => Number(b[1]?.hitRate || 0) - Number(a[1]?.hitRate || 0))
+    .slice(0, 8)
+    .map(([market, row]) => ({
+      market,
+      total: row.total,
+      hitRate: row.hitRate
+    }));
+
+  return {
+    updatedAt: aiLearningState.updatedAt,
+    trackedMarkets: entries.length,
+    memoryCap: MAX_HISTORY_ITEMS,
+    retention: {
+      fullDays: RETENTION_POLICY.keepDaysFull,
+      mediumDays: RETENTION_POLICY.keepDaysMedium,
+      lowDays: RETENTION_POLICY.keepDaysLow
+    },
+    topMarkets: sorted
+  };
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -545,6 +739,7 @@ async function refreshPredictionHistory(limit = 120) {
     })
     .slice(0, clamp(limit, 1, 200));
 
+  let hasUpdates = false;
   for (const item of pending) {
     const sofaId = parseSofaEventId(item.eventId);
     if (!sofaId) {
@@ -571,6 +766,17 @@ async function refreshPredictionHistory(limit = 120) {
     item.finalScore = `${Number(event?.homeScore?.current ?? 0)}-${Number(
       event?.awayScore?.current ?? 0
     )}`;
+
+    if (item.status === "win" || item.status === "loss") {
+      registerMarketOutcome(item.mainMarket, item.mainHit);
+      registerMarketOutcome(item.secondaryMarket, item.secondaryHit);
+      hasUpdates = true;
+    }
+  }
+
+  if (hasUpdates) {
+    dedupePredictionHistory();
+    await persistAiMemory();
   }
 }
 
@@ -579,7 +785,7 @@ function pushPredictionHistory(system, meta = {}) {
   const selectedEvents = system?.selectedEvents || [];
 
   for (const event of selectedEvents) {
-    predictionHistory.unshift({
+    const candidate = {
       id: `pred-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       generatedAt,
       sourceType: meta.sourceType || "unknown",
@@ -598,12 +804,34 @@ function pushPredictionHistory(system, meta = {}) {
       secondaryHit: null,
       finalScore: null,
       evaluatedAt: null
+    };
+
+    const duplicate = predictionHistory.find((item) => {
+      const sameKey = historyDedupKey(item) === historyDedupKey(candidate);
+      if (!sameKey) {
+        return false;
+      }
+      const existingTime = item.generatedAt ? Date.parse(item.generatedAt) : 0;
+      const nowTime = Date.parse(generatedAt);
+      return Number.isFinite(existingTime) && nowTime - existingTime < 36 * 60 * 60 * 1000;
+    });
+
+    if (duplicate) {
+      continue;
+    }
+
+    predictionHistory.unshift({
+      ...candidate
     });
   }
+
+  dedupePredictionHistory();
 
   if (predictionHistory.length > MAX_HISTORY_ITEMS) {
     predictionHistory.splice(MAX_HISTORY_ITEMS);
   }
+
+  persistAiMemory().catch(() => null);
 }
 
 async function recalibrateAiFromRecentResults(days = 30) {
@@ -1040,7 +1268,6 @@ function chooseSafestMarket(candidates, risk) {
     "UNDER 2.5": 0.02,
     "DRAW NO BET 1": 0.04,
     "DRAW NO BET 2": 0.04,
-    X: 1.1,
     "12": 0.03,
     X: 0.02,
     GG: 0.015,
@@ -1091,14 +1318,17 @@ function chooseSafestMarket(candidates, risk) {
       const oddValue = clamp((item.odd - 1.25) / 2.8, 0, 0.2);
       const hitRate = Number(aiTrainingState.marketHitRates[item.market] || 0.5);
       const calibrationBoost = clamp((hitRate - 0.5) * 0.12, -0.03, 0.04);
+      const adaptiveBoost = learningBoostForMarket(item.market);
       const score =
         item.confidence +
         conservativeWeight * (safetyBias[item.market] || 0.02) +
         valueWeight * oddValue +
-        calibrationBoost;
+        calibrationBoost +
+        adaptiveBoost;
       return {
         ...item,
         hitRate,
+        adaptiveBoost,
         score: Number(score.toFixed(4))
       };
     })
@@ -2086,6 +2316,7 @@ app.get("/api/health", (_, res) => {
     sourceUrl,
     sofaBaseUrl,
     aiTraining: aiTrainingState,
+    aiLearning: learningSummary(),
     predictionHistory: summary,
     marketUniverse: getMarketUniverseSummary()
   });
@@ -2103,6 +2334,7 @@ app.get("/api/predictions/history", async (req, res) => {
     res.json({
       generatedAt: new Date().toISOString(),
       summary: createHistorySummary(items),
+      learning: learningSummary(),
       items
     });
   } catch (error) {
@@ -2215,5 +2447,6 @@ app.post("/api/predict", async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Predict app attiva su http://localhost:${port}`);
+  loadAiMemory().catch(() => null);
   recalibrateAiFromRecentResults(30).catch(() => null);
 });

@@ -1,0 +1,85 @@
+{
+  "savedAt": "2026-03-04T12:58:50.897Z",
+  "predictionHistory": [
+    {
+      "id": "pred-1772628879440-cekwa1",
+      "generatedAt": "2026-03-04T12:54:39.440Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15479148",
+      "match": "FC Seoul vs Vissel Kobe",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "UNDER 3.5",
+      "mainOdd": 1.47,
+      "secondaryOdd": 1.59,
+      "confidence": 0.716,
+      "safetyScore": 0.7749,
+      "status": "loss",
+      "mainHit": false,
+      "secondaryHit": true,
+      "finalScore": "0-1",
+      "evaluatedAt": "2026-03-04T12:54:39.458Z"
+    },
+    {
+      "id": "pred-1772628879440-u1qq0b",
+      "generatedAt": "2026-03-04T12:54:39.440Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-15254188",
+      "match": "Academia Puerto Cabello vs Monagas",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "UNDER 3.5",
+      "mainOdd": 1.46,
+      "secondaryOdd": 1.59,
+      "confidence": 0.719,
+      "safetyScore": 0.7778,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": false,
+      "finalScore": "5-3",
+      "evaluatedAt": "2026-03-04T12:54:39.462Z"
+    },
+    {
+      "id": "pred-1772628879440-y3rx1p",
+      "generatedAt": "2026-03-04T12:54:39.440Z",
+      "sourceType": "sofascore-football",
+      "focusCountry": "Italia",
+      "eventId": "sofa-14068691",
+      "match": "Lazio U20 vs Lecce U20",
+      "matchDate": "2026-03-04",
+      "mainMarket": "OVER 1.5",
+      "secondaryMarket": "12",
+      "mainOdd": 1.36,
+      "secondaryOdd": 1.57,
+      "confidence": 0.775,
+      "safetyScore": 0.8327,
+      "status": "win",
+      "mainHit": true,
+      "secondaryHit": true,
+      "finalScore": "0-3",
+      "evaluatedAt": "2026-03-04T12:58:50.897Z"
+    }
+  ],
+  "aiLearningState": {
+    "updatedAt": "2026-03-04T12:58:50.897Z",
+    "marketOutcomes": {
+      "12": {
+        "win": 1,
+        "total": 1,
+        "hitRate": 0.95
+      },
+      "OVER 1.5": {
+        "win": 2,
+        "total": 3,
+        "hitRate": 0.667
+      },
+      "UNDER 3.5": {
+        "win": 1,
+        "total": 2,
+        "hitRate": 0.5
+      }
+    }
+  }
+}
