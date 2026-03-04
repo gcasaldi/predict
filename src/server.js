@@ -153,6 +153,8 @@ const publicDataWarehouseState = {
   rows: [],
   teamStats: {}
 };
+const marketPredictionLog = [];
+const MAX_MARKET_PREDICTION_LOG = 200000;
 const calibrationState = {
   updatedAt: null,
   bins: []
@@ -1772,7 +1774,8 @@ async function persistAiMemory() {
     monitoringState,
     dailyTrainingState,
     oddsScrapingState,
-    publicDataWarehouseState
+    publicDataWarehouseState,
+    marketPredictionLog: marketPredictionLog.slice(0, MAX_MARKET_PREDICTION_LOG)
   };
 
   await fs.mkdir(MEMORY_DIR, { recursive: true });
@@ -1859,6 +1862,11 @@ async function loadAiMemory() {
       publicDataWarehouseState.teamStats = storedWarehouse.teamStats || {};
       publicDataWarehouseState.summary = storedWarehouse.summary || publicDataWarehouseState.summary;
     }
+
+    const storedPredictionLog = Array.isArray(parsed.marketPredictionLog)
+      ? parsed.marketPredictionLog
+      : [];
+    marketPredictionLog.splice(0, marketPredictionLog.length, ...storedPredictionLog.slice(0, MAX_MARKET_PREDICTION_LOG));
   } catch {
     return;
   }
@@ -2604,6 +2612,176 @@ function hasRequiredQuoteFields(row) {
     Number.isFinite(oddsX) && oddsX > 1.01 &&
     Number.isFinite(odds2) && odds2 > 1.01
   );
+}
+
+function poissonProbability(k, lambda) {
+  if (k < 0 || !Number.isFinite(lambda) || lambda <= 0) {
+    return 0;
+  }
+  let factorial = 1;
+  for (let index = 2; index <= k; index += 1) {
+    factorial *= index;
+  }
+  return (Math.exp(-lambda) * (lambda ** k)) / factorial;
+}
+
+function buildGoalMatrix(lambdaHome, lambdaAway, maxGoals = 8) {
+  const matrix = [];
+  for (let home = 0; home <= maxGoals; home += 1) {
+    for (let away = 0; away <= maxGoals; away += 1) {
+      const pHome = poissonProbability(home, lambdaHome);
+      const pAway = poissonProbability(away, lambdaAway);
+      matrix.push({ home, away, p: pHome * pAway });
+    }
+  }
+  return matrix;
+}
+
+function marketProbabilityFromMatrix(matrix) {
+  const totalProb = (predicate) => Number(
+    matrix
+      .filter(predicate)
+      .reduce((acc, row) => acc + row.p, 0)
+      .toFixed(6)
+  );
+
+  const prob1 = totalProb((row) => row.home > row.away);
+  const probX = totalProb((row) => row.home === row.away);
+  const prob2 = totalProb((row) => row.home < row.away);
+  const probGG = totalProb((row) => row.home >= 1 && row.away >= 1);
+  const probNG = totalProb((row) => row.home === 0 || row.away === 0);
+  const over15 = totalProb((row) => row.home + row.away >= 2);
+  const over25 = totalProb((row) => row.home + row.away >= 3);
+  const over35 = totalProb((row) => row.home + row.away >= 4);
+  const under25 = totalProb((row) => row.home + row.away <= 2);
+  const under35 = totalProb((row) => row.home + row.away <= 3);
+
+  return {
+    "1": prob1,
+    X: probX,
+    "2": prob2,
+    "1X": Number((prob1 + probX).toFixed(6)),
+    X2: Number((prob2 + probX).toFixed(6)),
+    "12": Number((prob1 + prob2).toFixed(6)),
+    "OVER 1.5": over15,
+    "OVER 2.5": over25,
+    "OVER 3.5": over35,
+    "UNDER 2.5": under25,
+    "UNDER 3.5": under35,
+    GG: probGG,
+    NG: probNG,
+    "MULTIGOAL 1-3": totalProb((row) => {
+      const total = row.home + row.away;
+      return total >= 1 && total <= 3;
+    }),
+    "MULTIGOAL 2-4": totalProb((row) => {
+      const total = row.home + row.away;
+      return total >= 2 && total <= 4;
+    }),
+    "1 + OVER 1.5": totalProb((row) => row.home > row.away && row.home + row.away >= 2),
+    "1X + OVER 1.5": totalProb((row) => row.home >= row.away && row.home + row.away >= 2),
+    "GG + OVER 2.5": totalProb((row) => row.home >= 1 && row.away >= 1 && row.home + row.away >= 3)
+  };
+}
+
+function normalizeMarketKeyForOutput(market) {
+  return String(market || "")
+    .replaceAll(" ", "_")
+    .replaceAll("+", "PLUS");
+}
+
+function buildLambdasFromRow(row) {
+  const xgHome = Number(row?.xg_home ?? row?.xgHome ?? 1.25);
+  const xgAway = Number(row?.xg_away ?? row?.xgAway ?? 1.05);
+  const attackHome = Number(row?.attack_home_5 ?? row?.attackHome ?? 1.2);
+  const attackAway = Number(row?.attack_away_5 ?? row?.attackAway ?? 1.1);
+  const defenseHome = Number(row?.defense_home_5 ?? row?.defenseHome ?? 1.2);
+  const defenseAway = Number(row?.defense_away_5 ?? row?.defenseAway ?? 1.2);
+  const homeAdvantage = Number(row?.feature_home_advantage ?? row?.homeAdvantage ?? 0.08);
+
+  const attackStrengthHome = clamp(attackHome / 1.25, 0.6, 1.8);
+  const attackStrengthAway = clamp(attackAway / 1.25, 0.6, 1.8);
+  const defenseStrengthHome = clamp(defenseHome / 1.25, 0.6, 1.8);
+  const defenseStrengthAway = clamp(defenseAway / 1.25, 0.6, 1.8);
+
+  const lambdaHome = clamp(
+    xgHome * attackStrengthHome * defenseStrengthAway * (1 + homeAdvantage),
+    0.2,
+    3.8
+  );
+  const lambdaAway = clamp(
+    xgAway * attackStrengthAway * defenseStrengthHome,
+    0.2,
+    3.5
+  );
+
+  return {
+    lambdaHome: Number(lambdaHome.toFixed(4)),
+    lambdaAway: Number(lambdaAway.toFixed(4))
+  };
+}
+
+function buildMarketOutputForMatch(match, row = {}) {
+  const [homeTeam = "", awayTeam = ""] = String(match?.match || "").split(/\s+vs\s+/i);
+  const lambdas = buildLambdasFromRow(row);
+  const matrix = buildGoalMatrix(lambdas.lambdaHome, lambdas.lambdaAway, 8);
+  const probabilities = marketProbabilityFromMatrix(matrix);
+
+  const predictions = Object.entries(probabilities)
+    .map(([market, probability]) => ({
+      market,
+      market_key: normalizeMarketKeyForOutput(market),
+      probability: Number(clamp(Number(probability || 0), 0, 1).toFixed(4))
+    }))
+    .sort((a, b) => b.probability - a.probability);
+
+  const topPredictions = predictions
+    .filter((item) => item.probability > 0.55)
+    .sort((a, b) => b.probability - a.probability);
+
+  const recommendedOptions = (topPredictions.length >= 3
+    ? topPredictions
+    : predictions.slice(0, 5))
+    .slice(0, 5)
+    .map((item) => ({ market: item.market, probability: item.probability }));
+
+  const candidates = predictions.map((item) => ({
+    market: item.market,
+    confidence: item.probability,
+    odd: estimateOddFromConfidence(clamp(item.probability, 0.08, 0.94), item.market),
+    score: item.probability,
+    rationale: "Probabilità Poisson"
+  }));
+
+  return {
+    match_id: row?.match_id || match?.id || randomUUID(),
+    home_team: homeTeam,
+    away_team: awayTeam,
+    lambda_home: lambdas.lambdaHome,
+    lambda_away: lambdas.lambdaAway,
+    predictions,
+    top_predictions: topPredictions,
+    recommended_options: recommendedOptions,
+    marketCandidates: candidates
+  };
+}
+
+function appendMarketPredictionLog(items = []) {
+  const now = new Date().toISOString();
+  for (const item of items) {
+    const matchId = item?.match_id || null;
+    for (const row of item?.predictions || []) {
+      marketPredictionLog.unshift({
+        match_id: matchId,
+        market: row.market,
+        model_probability: Number(row.probability || 0),
+        timestamp: now
+      });
+    }
+  }
+  if (marketPredictionLog.length > MAX_MARKET_PREDICTION_LOG) {
+    marketPredictionLog.splice(MAX_MARKET_PREDICTION_LOG);
+  }
 }
 
 function impliedProbabilities(odds1, oddsX, odds2) {
@@ -4596,34 +4774,11 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
     .filter((row) => dateInRange(`${row.match_date}T12:00:00Z`, startDate, timeRangeDays));
 
   for (const row of baseFromWarehouse) {
-    const probs = impliedProbabilities(row.odds_1, row.odds_x, row.odds_2);
-    if (!probs) {
-      continue;
-    }
-
-    const candidates = [
-      {
-        market: "1",
-        odd: Number(row.odds_1),
-        confidence: clamp((probs.p1 || 0.33) + Number(row.feature_form_diff_5 || 0) * 0.03 + 0.02, 0.35, 0.89),
-        score: clamp((probs.p1 || 0.33) + 0.08, 0.3, 0.95),
-        rationale: "Probabilità implicita quota 1 con aggiustamento forma"
-      },
-      {
-        market: "X",
-        odd: Number(row.odds_x),
-        confidence: clamp(probs.px || 0.28, 0.2, 0.6),
-        score: clamp((probs.px || 0.28) + 0.03, 0.2, 0.7),
-        rationale: "Probabilità implicita quota X"
-      },
-      {
-        market: "2",
-        odd: Number(row.odds_2),
-        confidence: clamp((probs.p2 || 0.33) - Number(row.feature_form_diff_5 || 0) * 0.03, 0.35, 0.89),
-        score: clamp((probs.p2 || 0.33) + 0.08, 0.3, 0.95),
-        rationale: "Probabilità implicita quota 2 con aggiustamento forma"
-      }
-    ];
+    const marketOutput = buildMarketOutputForMatch({
+      id: row.match_id,
+      match: `${row.home_team} vs ${row.away_team}`
+    }, row);
+    const candidates = marketOutput.marketCandidates;
     const chosen = chooseSafestMarket(candidates, 0.1);
 
     upcoming.push({
@@ -4645,6 +4800,12 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
       matchDate: row.match_date,
       source: "public-warehouse",
       raw: `Warehouse ${row.match_id}`,
+      match_id: row.match_id,
+      lambda_home: marketOutput.lambda_home,
+      lambda_away: marketOutput.lambda_away,
+      predictions: marketOutput.predictions,
+      top_predictions: marketOutput.top_predictions,
+      recommended_options: marketOutput.recommended_options,
       pastStats: {
         homePpg: Number(row.form_home_5 || 1),
         awayPpg: Number(row.form_away_5 || 1),
@@ -4672,60 +4833,22 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
       continue;
     }
 
-    const probs = impliedProbabilities(odds1, oddsX, odds2);
-    if (!probs) {
-      continue;
-    }
-
     const homeKey = normalizeTeamKey(row.home_team);
     const awayKey = normalizeTeamKey(row.away_team);
     const historicRows = warehouseByTeam.get(`${homeKey}|${awayKey}`) || [];
     const last = historicRows[0] || null;
-
-    const candidates = [
-      {
-        market: "1",
-        odd: odds1,
-        confidence: clamp((probs.p1 || 0.33) + Number(last?.feature_form_diff_5 || 0) * 0.03 + 0.02, 0.35, 0.89),
-        score: clamp((probs.p1 || 0.33) + 0.08, 0.3, 0.95),
-        rationale: "Probabilità implicita quota 1 con aggiustamento forma"
-      },
-      {
-        market: "X",
-        odd: oddsX,
-        confidence: clamp(probs.px || 0.28, 0.2, 0.6),
-        score: clamp((probs.px || 0.28) + 0.03, 0.2, 0.7),
-        rationale: "Probabilità implicita quota X"
-      },
-      {
-        market: "2",
-        odd: odds2,
-        confidence: clamp((probs.p2 || 0.33) - Number(last?.feature_form_diff_5 || 0) * 0.03, 0.35, 0.89),
-        score: clamp((probs.p2 || 0.33) + 0.08, 0.3, 0.95),
-        rationale: "Probabilità implicita quota 2 con aggiustamento forma"
-      },
-      {
-        market: "1X",
-        odd: Number((1 / Math.max(0.0001, probs.p1 + probs.px)).toFixed(3)),
-        confidence: clamp(probs.p1 + probs.px, 0.45, 0.95),
-        score: clamp(probs.p1 + probs.px, 0.4, 0.99),
-        rationale: "Copertura 1X da probabilità implicite"
-      },
-      {
-        market: "X2",
-        odd: Number((1 / Math.max(0.0001, probs.p2 + probs.px)).toFixed(3)),
-        confidence: clamp(probs.p2 + probs.px, 0.45, 0.95),
-        score: clamp(probs.p2 + probs.px, 0.4, 0.99),
-        rationale: "Copertura X2 da probabilità implicite"
-      },
-      {
-        market: "12",
-        odd: Number((1 / Math.max(0.0001, probs.p1 + probs.p2)).toFixed(3)),
-        confidence: clamp(probs.p1 + probs.p2, 0.5, 0.96),
-        score: clamp(probs.p1 + probs.p2, 0.45, 0.99),
-        rationale: "Copertura 12 da probabilità implicite"
-      }
-    ];
+    const marketOutput = buildMarketOutputForMatch({
+      id: `odds-${row.eventUrl || randomUUID()}`,
+      match: `${row.home_team} vs ${row.away_team}`
+    }, {
+      ...last,
+      xg_home: last?.xg_home ?? 1.25,
+      xg_away: last?.xg_away ?? 1.05,
+      odds_1: odds1,
+      odds_x: oddsX,
+      odds_2: odds2
+    });
+    const candidates = marketOutput.marketCandidates;
 
     const chosen = chooseSafestMarket(candidates, 0.1);
     const matchDate = toIsoDate(kickoffDate);
@@ -4749,6 +4872,12 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
       matchDate,
       source: "oddsportal",
       raw: `OddsPortal ${row.eventUrl || "event"}`,
+      match_id: marketOutput.match_id,
+      lambda_home: marketOutput.lambda_home,
+      lambda_away: marketOutput.lambda_away,
+      predictions: marketOutput.predictions,
+      top_predictions: marketOutput.top_predictions,
+      recommended_options: marketOutput.recommended_options,
       pastStats: {
         homePpg: Number(last?.form_home_5 || 1),
         awayPpg: Number(last?.form_away_5 || 1),
@@ -4765,33 +4894,11 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
       .slice(0, Math.max(maxMatches * 4, 20));
 
     for (const row of latestQuoted) {
-      const probs = impliedProbabilities(row.odds_1, row.odds_x, row.odds_2);
-      if (!probs) {
-        continue;
-      }
-      const candidates = [
-        {
-          market: "1",
-          odd: Number(row.odds_1),
-          confidence: clamp((probs.p1 || 0.33) + Number(row.feature_form_diff_5 || 0) * 0.03 + 0.02, 0.35, 0.89),
-          score: clamp((probs.p1 || 0.33) + 0.08, 0.3, 0.95),
-          rationale: "Fallback quote storiche con probabilità implicite"
-        },
-        {
-          market: "X",
-          odd: Number(row.odds_x),
-          confidence: clamp(probs.px || 0.28, 0.2, 0.6),
-          score: clamp((probs.px || 0.28) + 0.03, 0.2, 0.7),
-          rationale: "Fallback quote storiche con probabilità implicite"
-        },
-        {
-          market: "2",
-          odd: Number(row.odds_2),
-          confidence: clamp((probs.p2 || 0.33) - Number(row.feature_form_diff_5 || 0) * 0.03, 0.35, 0.89),
-          score: clamp((probs.p2 || 0.33) + 0.08, 0.3, 0.95),
-          rationale: "Fallback quote storiche con probabilità implicite"
-        }
-      ];
+      const marketOutput = buildMarketOutputForMatch({
+        id: row.match_id,
+        match: `${row.home_team} vs ${row.away_team}`
+      }, row);
+      const candidates = marketOutput.marketCandidates;
       const chosen = chooseSafestMarket(candidates, 0.1);
       upcoming.push({
         id: `whf-${randomUUID().slice(0, 8)}`,
@@ -4812,6 +4919,12 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
         matchDate: row.match_date,
         source: "public-warehouse-fallback",
         raw: `Warehouse fallback ${row.match_id}`,
+        match_id: row.match_id,
+        lambda_home: marketOutput.lambda_home,
+        lambda_away: marketOutput.lambda_away,
+        predictions: marketOutput.predictions,
+        top_predictions: marketOutput.top_predictions,
+        recommended_options: marketOutput.recommended_options,
         pastStats: {
           homePpg: Number(row.form_home_5 || 1),
           awayPpg: Number(row.form_away_5 || 1),
@@ -5827,6 +5940,8 @@ app.get("/api/monitoring", (_req, res) => {
 app.get("/api/data/warehouse", (req, res) => {
   const limit = clamp(parseInputNumber(req.query?.limit, 200), 1, 5000);
   const onlyComplete = String(req.query?.completeOnly || "1") !== "0";
+  const includePredictionLog = String(req.query?.includePredictionLog || "0") === "1";
+  const predictionLogLimit = clamp(parseInputNumber(req.query?.predictionLogLimit, 200), 1, 5000);
   const rows = onlyComplete
     ? publicDataWarehouseState.rows.filter((row) => row.complete).slice(0, limit)
     : publicDataWarehouseState.rows.slice(0, limit);
@@ -5837,7 +5952,11 @@ app.get("/api/data/warehouse", (req, res) => {
     summary: publicDataWarehouseState.summary,
     totalRows: publicDataWarehouseState.rows.length,
     returnedRows: rows.length,
-    items: rows
+    items: rows,
+    prediction_log_count: marketPredictionLog.length,
+    prediction_log: includePredictionLog
+      ? marketPredictionLog.slice(0, predictionLogLimit)
+      : []
   });
 });
 
@@ -6005,6 +6124,47 @@ app.post("/api/predict", async (req, res) => {
       });
     }
 
+    const marketPredictions = riskAware.map((match) => {
+      const [home = "", away = ""] = String(match.match || "").split(/\s+vs\s+/i);
+      const fallbackRow = {
+        match_id: match.match_id || match.id,
+        xg_home: Number(match?.xg_home ?? 1.25),
+        xg_away: Number(match?.xg_away ?? 1.05),
+        attack_home_5: Number(match?.pastStats?.homeGF ?? 1.2),
+        attack_away_5: Number(match?.pastStats?.awayGF ?? 1.1),
+        defense_home_5: 1.2,
+        defense_away_5: 1.2,
+        feature_home_advantage: 0.08
+      };
+
+      const built = Array.isArray(match.predictions) && match.predictions.length
+        ? {
+            match_id: match.match_id || match.id,
+            home_team: home,
+            away_team: away,
+            lambda_home: Number(match.lambda_home || 1.2),
+            lambda_away: Number(match.lambda_away || 1),
+            predictions: match.predictions,
+            top_predictions: match.top_predictions || [],
+            recommended_options: match.recommended_options || []
+          }
+        : buildMarketOutputForMatch(match, fallbackRow);
+
+      return {
+        match_id: built.match_id,
+        home_team: built.home_team,
+        away_team: built.away_team,
+        lambda_home: built.lambda_home,
+        lambda_away: built.lambda_away,
+        predictions: built.predictions,
+        top_predictions: built.top_predictions,
+        recommended_options: built.recommended_options
+      };
+    });
+
+    appendMarketPredictionLog(marketPredictions);
+    await persistAiMemory().catch(() => null);
+
     const system = buildParachuteSystem(riskAware, options);
     const trackableEvents = trackAllPredictions
       ? buildTrackableEvents(riskAware, risk, trackLimit)
@@ -6035,6 +6195,7 @@ app.post("/api/predict", async (req, res) => {
         accepted: qualityGate.accepted.length,
         rejected: qualityGate.rejected.length
       },
+      market_predictions: marketPredictions,
       system,
       llm
     });
