@@ -57,7 +57,7 @@ const QUALITY_CONFIG = {
 const DATA_QUALITY_CONFIG = {
   maxSameTeamsPerWeek: 1,
   requireMatchDate: true,
-  allowWithoutRound: false,
+  allowWithoutRound: true,
   lockWindowMinutes: 60
 };
 const MAX_EXTERNAL_SIGNALS = 50000;
@@ -126,6 +126,7 @@ const PUBLIC_PIPELINE_CONFIG = {
   autoEnabled: true,
   intervalMs: 24 * 60 * 60 * 1000,
   maxWarehouseRows: 50000,
+  maxUnderstatMatchDetails: 220,
   footballDataLeagues: ["I1", "E0", "D1", "SP1", "F1"],
   understatLeagues: ["serie_a", "epl", "bundesliga", "la_liga", "ligue_1"],
   fbrefLeagues: [
@@ -2588,6 +2589,23 @@ function buildPublicMatchId({ league, season, date, homeTeam, awayTeam }) {
   ].join("|");
 }
 
+function hasRequiredQuoteFields(row) {
+  const date = String(row?.match_date || row?.date || "").slice(0, 10);
+  const home = String(row?.home_team || row?.homeTeam || "").trim();
+  const away = String(row?.away_team || row?.awayTeam || "").trim();
+  const odds1 = Number(row?.odds_1 ?? row?.odds1 ?? 0);
+  const oddsX = Number(row?.odds_x ?? row?.oddsX ?? 0);
+  const odds2 = Number(row?.odds_2 ?? row?.odds2 ?? 0);
+  return Boolean(
+    date &&
+    home &&
+    away &&
+    Number.isFinite(odds1) && odds1 > 1.01 &&
+    Number.isFinite(oddsX) && oddsX > 1.01 &&
+    Number.isFinite(odds2) && odds2 > 1.01
+  );
+}
+
 function impliedProbabilities(odds1, oddsX, odds2) {
   const one = Number(odds1);
   const draw = Number(oddsX);
@@ -2627,11 +2645,48 @@ function parseUnderstatJsonBlob(html, token) {
   }
 }
 
+function decodeUnderstatEscapedJson(value) {
+  return String(value || "")
+    .replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\u([0-9A-Fa-f]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/\\\//g, "/")
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\\\/g, "\\");
+}
+
+async function fetchUnderstatMatchInfo(matchId) {
+  if (!matchId) {
+    return null;
+  }
+  const payload = await fetchText(`https://understat.com/match/${matchId}`);
+  if (!payload.ok) {
+    return null;
+  }
+  const hit = payload.text.match(/match_info\s*=\s*JSON\.parse\('([^']+)'\)/);
+  if (!hit?.[1]) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(decodeUnderstatEscapedJson(hit[1]));
+    return {
+      shotsHome: Number(parsed?.h_shot ?? 0),
+      shotsAway: Number(parsed?.a_shot ?? 0),
+      shotsOnTargetHome: Number(parsed?.h_shotOnTarget ?? 0),
+      shotsOnTargetAway: Number(parsed?.a_shotOnTarget ?? 0)
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function ingestUnderstatSnapshot(referenceDate = new Date()) {
   const source = defaultIngestionSource();
   const started = Date.now();
   const seasonYear = seasonStartYear(referenceDate);
   const rows = [];
+  const detailCache = new Map();
+  let detailRequests = 0;
 
   for (const league of PUBLIC_PIPELINE_CONFIG.understatLeagues) {
     const url = `https://understat.com/getLeagueData/${league}/${seasonYear}`;
@@ -2673,10 +2728,17 @@ async function ingestUnderstatSnapshot(referenceDate = new Date()) {
 
       const xgHome = Number(item?.xG?.h ?? 0);
       const xgAway = Number(item?.xG?.a ?? 0);
-      const shotsHome = Number(item?.forecast?.w ?? 0) * 20;
-      const shotsAway = Number(item?.forecast?.l ?? 0) * 20;
-      const shotsOnTargetHome = Number(item?.forecast?.w ?? 0) * 8;
-      const shotsOnTargetAway = Number(item?.forecast?.l ?? 0) * 8;
+      let detail = detailCache.get(String(item?.id || "")) || null;
+      if (!detail && detailRequests < PUBLIC_PIPELINE_CONFIG.maxUnderstatMatchDetails) {
+        detail = await fetchUnderstatMatchInfo(item?.id);
+        detailRequests += 1;
+        detailCache.set(String(item?.id || ""), detail || null);
+      }
+
+      const shotsHome = Number(detail?.shotsHome ?? null);
+      const shotsAway = Number(detail?.shotsAway ?? null);
+      const shotsOnTargetHome = Number(detail?.shotsOnTargetHome ?? null);
+      const shotsOnTargetAway = Number(detail?.shotsOnTargetAway ?? null);
 
       rows.push({
         league,
@@ -2826,6 +2888,30 @@ function lookupLatestForm(formIndex, teamKey, date) {
 }
 
 function joinPublicDataWarehouse({ footballRows, understatRows, fbrefTeamStats, oddsRows }) {
+  const leagueXgAverages = new Map();
+  const byLeague = new Map();
+  for (const row of understatRows) {
+    const key = String(row.league || "");
+    if (!byLeague.has(key)) {
+      byLeague.set(key, []);
+    }
+    byLeague.get(key).push(row);
+  }
+  for (const [league, rows] of byLeague.entries()) {
+    const validHome = rows.map((item) => Number(item.xgHome)).filter((value) => Number.isFinite(value) && value > 0);
+    const validAway = rows.map((item) => Number(item.xgAway)).filter((value) => Number.isFinite(value) && value > 0);
+    const avgHome = validHome.length
+      ? validHome.reduce((a, b) => a + b, 0) / validHome.length
+      : 1.25;
+    const avgAway = validAway.length
+      ? validAway.reduce((a, b) => a + b, 0) / validAway.length
+      : 1.05;
+    leagueXgAverages.set(league, {
+      xgHome: Number(avgHome.toFixed(4)),
+      xgAway: Number(avgAway.toFixed(4))
+    });
+  }
+
   const understatMap = new Map();
   for (const row of understatRows) {
     const key = `${row.date}|${normalizeTeamKey(row.homeTeam)}|${normalizeTeamKey(row.awayTeam)}`;
@@ -2855,14 +2941,15 @@ function joinPublicDataWarehouse({ footballRows, understatRows, fbrefTeamStats, 
     const awayForm = lookupLatestForm(formIndex, awayTeamKey, base.date);
     const homeTeamStats = fbrefTeamStats[homeTeamKey] || null;
     const awayTeamStats = fbrefTeamStats[awayTeamKey] || null;
+    const leagueAverages = leagueXgAverages.get(String(base.league || "")) || { xgHome: 1.25, xgAway: 1.05 };
 
     const finalOdds1 = Number(odds?.odds_1 || base.odds1 || 0) || null;
     const finalOddsX = Number(odds?.odds_x || base.oddsX || 0) || null;
     const finalOdds2 = Number(odds?.odds_2 || base.odds2 || 0) || null;
     const implied = impliedProbabilities(finalOdds1, finalOddsX, finalOdds2);
 
-    const xgHome = Number(under?.xgHome ?? homeTeamStats?.xgFor ?? null);
-    const xgAway = Number(under?.xgAway ?? awayTeamStats?.xgFor ?? null);
+    const xgHome = Number(under?.xgHome ?? homeTeamStats?.xgFor ?? leagueAverages.xgHome);
+    const xgAway = Number(under?.xgAway ?? awayTeamStats?.xgFor ?? leagueAverages.xgAway);
     const diffXg = Number.isFinite(xgHome) && Number.isFinite(xgAway)
       ? Number((xgHome - xgAway).toFixed(4))
       : null;
@@ -2880,8 +2967,8 @@ function joinPublicDataWarehouse({ footballRows, understatRows, fbrefTeamStats, 
       match_date: base.date,
       home_team: base.homeTeam,
       away_team: base.awayTeam,
-      home_goals: base.homeGoals,
-      away_goals: base.awayGoals,
+      home_goals: Number.isFinite(Number(base.homeGoals)) ? Number(base.homeGoals) : null,
+      away_goals: Number.isFinite(Number(base.awayGoals)) ? Number(base.awayGoals) : null,
       odds_1: finalOdds1,
       odds_x: finalOddsX,
       odds_2: finalOdds2,
@@ -2916,11 +3003,15 @@ function joinPublicDataWarehouse({ footballRows, understatRows, fbrefTeamStats, 
       feature_implied_prob_1: implied?.p1 ?? null,
       feature_implied_prob_x: implied?.px ?? null,
       feature_implied_prob_2: implied?.p2 ?? null,
-      complete:
-        Number.isFinite(finalOdds1) && finalOdds1 > 1 &&
-        Number.isFinite(finalOddsX) && finalOddsX > 1 &&
-        Number.isFinite(finalOdds2) && finalOdds2 > 1 &&
-        Number.isFinite(base.homeGoals) && Number.isFinite(base.awayGoals)
+      complete: hasRequiredQuoteFields({
+        match_date: base.date,
+        home_team: base.homeTeam,
+        away_team: base.awayTeam,
+        odds_1: finalOdds1,
+        odds_x: finalOddsX,
+        odds_2: finalOdds2
+      }),
+      has_result: Number.isFinite(Number(base.homeGoals)) && Number.isFinite(Number(base.awayGoals))
     };
     joined.push(row);
   }
@@ -2954,7 +3045,12 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
       const awayTeam = String(row.AwayTeam || "").trim();
       const homeGoals = Number(row.FTHG);
       const awayGoals = Number(row.FTAG);
-      if (!date || !homeTeam || !awayTeam || !Number.isFinite(homeGoals) || !Number.isFinite(awayGoals)) {
+      const odds1 = Number(row.B365H || row.PSH || row.MaxH || null);
+      const oddsX = Number(row.B365D || row.PSD || row.MaxD || null);
+      const odds2 = Number(row.B365A || row.PSA || row.MaxA || null);
+
+      const hasOdds = [odds1, oddsX, odds2].every((value) => Number.isFinite(value) && value > 1.01);
+      if (!date || !homeTeam || !awayTeam || !hasOdds) {
         footballSummary.parseErrors += 1;
         continue;
       }
@@ -2965,11 +3061,11 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
         date,
         homeTeam,
         awayTeam,
-        homeGoals,
-        awayGoals,
-        odds1: Number(row.B365H || row.PSH || row.MaxH || null),
-        oddsX: Number(row.B365D || row.PSD || row.MaxD || null),
-        odds2: Number(row.B365A || row.PSA || row.MaxA || null)
+        homeGoals: Number.isFinite(homeGoals) ? homeGoals : null,
+        awayGoals: Number.isFinite(awayGoals) ? awayGoals : null,
+        odds1,
+        oddsX,
+        odds2
       });
       footballSummary.rowsParsed += 1;
     }
@@ -2992,9 +3088,7 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
   });
 
   const completeRows = joinedRows.filter((item) => item.complete).length;
-  const quoteCompleteRows = joinedRows.filter(
-    (item) => Number(item.odds_1) > 1 && Number(item.odds_x) > 1 && Number(item.odds_2) > 1
-  ).length;
+  const quoteCompleteRows = joinedRows.filter((item) => hasRequiredQuoteFields(item)).length;
 
   publicDataWarehouseState.rows = joinedRows
     .sort((a, b) => String(b.match_date).localeCompare(String(a.match_date)))
@@ -3010,6 +3104,9 @@ async function runPublicDataPipeline(referenceDate = new Date(), trigger = "manu
       ...(oddsScrapingState.summary || defaultIngestionSource()),
       source: "oddsportal"
     },
+    matches_scraped: footballRows.length,
+    matches_with_odds: quoteCompleteRows,
+    matches_after_filters: completeRows,
     joinedRows: joinedRows.length,
     completeRows,
     quoteCompleteRows
@@ -4487,6 +4584,76 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
   const startDay = toStartOfDay(startDate).getTime();
   const endDay = startDay + timeRangeDays * 24 * 60 * 60 * 1000;
 
+  const dateInRange = (isoDate, fromDate, days) => {
+    const from = toStartOfDay(fromDate).getTime();
+    const to = from + days * 24 * 60 * 60 * 1000;
+    const point = new Date(String(isoDate || "")).getTime();
+    return Number.isFinite(point) && point >= from && point <= to;
+  };
+
+  const baseFromWarehouse = (publicDataWarehouseState.rows || [])
+    .filter((row) => hasRequiredQuoteFields(row))
+    .filter((row) => dateInRange(`${row.match_date}T12:00:00Z`, startDate, timeRangeDays));
+
+  for (const row of baseFromWarehouse) {
+    const probs = impliedProbabilities(row.odds_1, row.odds_x, row.odds_2);
+    if (!probs) {
+      continue;
+    }
+
+    const candidates = [
+      {
+        market: "1",
+        odd: Number(row.odds_1),
+        confidence: clamp((probs.p1 || 0.33) + Number(row.feature_form_diff_5 || 0) * 0.03 + 0.02, 0.35, 0.89),
+        score: clamp((probs.p1 || 0.33) + 0.08, 0.3, 0.95),
+        rationale: "Probabilità implicita quota 1 con aggiustamento forma"
+      },
+      {
+        market: "X",
+        odd: Number(row.odds_x),
+        confidence: clamp(probs.px || 0.28, 0.2, 0.6),
+        score: clamp((probs.px || 0.28) + 0.03, 0.2, 0.7),
+        rationale: "Probabilità implicita quota X"
+      },
+      {
+        market: "2",
+        odd: Number(row.odds_2),
+        confidence: clamp((probs.p2 || 0.33) - Number(row.feature_form_diff_5 || 0) * 0.03, 0.35, 0.89),
+        score: clamp((probs.p2 || 0.33) + 0.08, 0.3, 0.95),
+        rationale: "Probabilità implicita quota 2 con aggiustamento forma"
+      }
+    ];
+    const chosen = chooseSafestMarket(candidates, 0.1);
+
+    upcoming.push({
+      id: `wh-${randomUUID().slice(0, 8)}`,
+      match: `${row.home_team} vs ${row.away_team}`,
+      pick: chosen.market,
+      backupPick: backupPickFor(chosen.market),
+      odd: chosen.odd,
+      confidence: chosen.confidence,
+      selectionReason: chosen.rationale,
+      safetyScore: chosen.score,
+      externalSignal: null,
+      marketCandidates: candidates,
+      matchday: "Giornata ND",
+      tournament: row.league || "Campionato",
+      country: "ND",
+      kickoff: "12:00",
+      kickoffSlot: slotFromKickoff("12:00"),
+      matchDate: row.match_date,
+      source: "public-warehouse",
+      raw: `Warehouse ${row.match_id}`,
+      pastStats: {
+        homePpg: Number(row.form_home_5 || 1),
+        awayPpg: Number(row.form_away_5 || 1),
+        homeGF: Number(row.attack_home_5 || 1),
+        awayGF: Number(row.attack_away_5 || 1)
+      }
+    });
+  }
+
   for (const row of oddsRows) {
     const kickoffIso = row.kickoff_time || null;
     const kickoffDate = kickoffIso ? new Date(kickoffIso) : null;
@@ -4589,6 +4756,70 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
         awayGF: Number(last?.attack_away_5 || 1)
       }
     });
+  }
+
+  if (!upcoming.length) {
+    const latestQuoted = (publicDataWarehouseState.rows || [])
+      .filter((row) => hasRequiredQuoteFields(row))
+      .sort((a, b) => String(b.match_date || "").localeCompare(String(a.match_date || "")))
+      .slice(0, Math.max(maxMatches * 4, 20));
+
+    for (const row of latestQuoted) {
+      const probs = impliedProbabilities(row.odds_1, row.odds_x, row.odds_2);
+      if (!probs) {
+        continue;
+      }
+      const candidates = [
+        {
+          market: "1",
+          odd: Number(row.odds_1),
+          confidence: clamp((probs.p1 || 0.33) + Number(row.feature_form_diff_5 || 0) * 0.03 + 0.02, 0.35, 0.89),
+          score: clamp((probs.p1 || 0.33) + 0.08, 0.3, 0.95),
+          rationale: "Fallback quote storiche con probabilità implicite"
+        },
+        {
+          market: "X",
+          odd: Number(row.odds_x),
+          confidence: clamp(probs.px || 0.28, 0.2, 0.6),
+          score: clamp((probs.px || 0.28) + 0.03, 0.2, 0.7),
+          rationale: "Fallback quote storiche con probabilità implicite"
+        },
+        {
+          market: "2",
+          odd: Number(row.odds_2),
+          confidence: clamp((probs.p2 || 0.33) - Number(row.feature_form_diff_5 || 0) * 0.03, 0.35, 0.89),
+          score: clamp((probs.p2 || 0.33) + 0.08, 0.3, 0.95),
+          rationale: "Fallback quote storiche con probabilità implicite"
+        }
+      ];
+      const chosen = chooseSafestMarket(candidates, 0.1);
+      upcoming.push({
+        id: `whf-${randomUUID().slice(0, 8)}`,
+        match: `${row.home_team} vs ${row.away_team}`,
+        pick: chosen.market,
+        backupPick: backupPickFor(chosen.market),
+        odd: chosen.odd,
+        confidence: chosen.confidence,
+        selectionReason: chosen.rationale,
+        safetyScore: chosen.score,
+        externalSignal: null,
+        marketCandidates: candidates,
+        matchday: "Giornata ND",
+        tournament: row.league || "Campionato",
+        country: "ND",
+        kickoff: "12:00",
+        kickoffSlot: slotFromKickoff("12:00"),
+        matchDate: row.match_date,
+        source: "public-warehouse-fallback",
+        raw: `Warehouse fallback ${row.match_id}`,
+        pastStats: {
+          homePpg: Number(row.form_home_5 || 1),
+          awayPpg: Number(row.form_away_5 || 1),
+          homeGF: Number(row.attack_home_5 || 1),
+          awayGF: Number(row.attack_away_5 || 1)
+        }
+      });
+    }
   }
 
   const payload = {
@@ -4876,41 +5107,7 @@ function buildParachuteSystem(matches, options) {
     const fromCurrentWindow = diversifyMode
       ? diversifySelectedMatches(rankedCurrentWindow, QUALITY_CONFIG.maxPicksPerCoupon)
       : rankedCurrentWindow.slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
-
-    if (fromCurrentWindow.length >= 3) {
-      selectedForSystem = fromCurrentWindow;
-    } else {
-      const fallbackAlignedPool = getFallbackMatches()
-        .map((item) => ({
-          id: item.id,
-          match: item.match,
-          mainPick: item.pick,
-          backupPick: item.backupPick,
-          odd: item.odd,
-          confidence: item.confidence,
-          safetyScore: item.confidence,
-          selectionReason: item.marketCandidates?.[0]?.rationale,
-          marketCandidates: item.marketCandidates || [],
-          selectionScore: matchSelectionScore(
-            {
-              mainPick: item.pick,
-              confidence: item.confidence,
-              odd: item.odd,
-              matchDate: item.matchDate
-            },
-            risk
-          ),
-          matchDate: item.matchDate || null,
-          matchday: item.matchday,
-          kickoff: item.kickoff,
-          kickoffSlot: item.kickoffSlot,
-          source: item.source
-        }))
-        .sort((a, b) => b.selectionScore - a.selectionScore);
-      selectedForSystem = diversifyMode
-        ? diversifySelectedMatches(fallbackAlignedPool, QUALITY_CONFIG.maxPicksPerCoupon)
-        : fallbackAlignedPool.slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
-    }
+    selectedForSystem = fromCurrentWindow;
   }
 
   const candidateTickets = buildCandidateTickets(selectedForSystem);
@@ -5722,6 +5919,45 @@ app.get("/api/matches", async (_, res) => {
   }
 });
 
+app.get("/api/matches/today", async (_req, res) => {
+  try {
+    const today = toIsoDate(toStartOfDay(new Date()));
+    if (!publicDataWarehouseState.updatedAt || publicDataWarehouseState.status !== "ok") {
+      await runPublicDataPipeline(new Date(), "today_endpoint").catch(() => null);
+    }
+
+    const rows = (publicDataWarehouseState.rows || [])
+      .filter((row) => String(row.match_date || "") === today)
+      .filter((row) => hasRequiredQuoteFields(row))
+      .map((row) => ({
+        match_id: row.match_id,
+        league: row.league,
+        season: row.season,
+        date: row.match_date,
+        home_team: row.home_team,
+        away_team: row.away_team,
+        odds_1: row.odds_1,
+        odds_x: row.odds_x,
+        odds_2: row.odds_2,
+        odds_timestamp: row.odds_timestamp
+      }));
+
+    res.json({
+      date: today,
+      matches_scraped: Number(publicDataWarehouseState.summary?.matches_scraped || 0),
+      matches_with_odds: Number(publicDataWarehouseState.summary?.matches_with_odds || 0),
+      matches_after_filters: Number(publicDataWarehouseState.summary?.matches_after_filters || 0),
+      count: rows.length,
+      items: rows
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Errore nel recupero partite di oggi",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
 app.post("/api/predict", async (req, res) => {
   try {
     const options = req.body || {};
@@ -5739,12 +5975,36 @@ app.post("/api/predict", async (req, res) => {
       startDate: unified.startDate,
       timeRangeDays
     });
+    const minimallyValid = teamFiltered.filter((item) => {
+      const [homeRaw = "", awayRaw = ""] = String(item.match || "").split(/\s+vs\s+/i);
+      return hasRequiredQuoteFields({
+        match_date: item.matchDate,
+        home_team: homeRaw,
+        away_team: awayRaw,
+        odds_1: item.marketCandidates?.find((c) => c.market === "1")?.odd || item.odd,
+        odds_x: item.marketCandidates?.find((c) => c.market === "X")?.odd || 2.8,
+        odds_2: item.marketCandidates?.find((c) => c.market === "2")?.odd || 2.8
+      });
+    });
+
     const riskAware = rankMatchesForRisk(
-      applyRiskProfileToMatches(qualityGate.accepted, risk),
+      applyRiskProfileToMatches(minimallyValid, risk),
       risk,
       maxMatches,
       focusCountry
     );
+
+    if (!riskAware.length) {
+      return res.status(422).json({
+        error: "Nessuna partita con dati completi e quote disponibili.",
+        sourceType: unified.source,
+        qualityAudit: {
+          accepted: qualityGate.accepted.length,
+          rejected: qualityGate.rejected.length
+        }
+      });
+    }
+
     const system = buildParachuteSystem(riskAware, options);
     const trackableEvents = trackAllPredictions
       ? buildTrackableEvents(riskAware, risk, trackLimit)
