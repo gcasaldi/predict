@@ -46,7 +46,8 @@ const QUALITY_CONFIG = {
   minMainScore: 0.62,
   minMainConfidence: 0.56,
   minMainOdd: 1.35,
-  maxPicksPerCoupon: 3
+  maxPicksPerCoupon: 3,
+  abstainQualityQuantile: 0.72
 };
 const MAX_EXTERNAL_SIGNALS = 50000;
 
@@ -1913,6 +1914,66 @@ function marketStabilityBias(market) {
   return map[market] || 0.04;
 }
 
+function marketGroup(market) {
+  const value = String(market || "").toUpperCase();
+  if (["1", "X", "2", "1X", "X2", "12", "DRAW NO BET 1", "DRAW NO BET 2"].includes(value)) {
+    return "esito";
+  }
+  if (value.includes("MULTIGOAL")) {
+    return "multigol";
+  }
+  if (value.includes("+") || value.includes("COMBO")) {
+    return "combo";
+  }
+  if (value.includes("OVER") || value.includes("UNDER") || value === "GG" || value === "NG") {
+    return "goal";
+  }
+  return "altro";
+}
+
+function quantileThreshold(values, quantile = 0.7) {
+  if (!values?.length) {
+    return 0;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const q = clamp(quantile, 0.5, 0.95);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * q)));
+  return Number(sorted[index] || 0);
+}
+
+function diversifySelectedMatches(items, maxCount = 3) {
+  const limit = Math.max(1, maxCount);
+  const sorted = [...items].sort((a, b) => Number(b.selectionScore || 0) - Number(a.selectionScore || 0));
+  const selected = [];
+  const usedGroups = new Set();
+
+  for (const item of sorted) {
+    if (selected.length >= limit) {
+      break;
+    }
+    const group = marketGroup(item.mainPick);
+    if (usedGroups.has(group)) {
+      continue;
+    }
+    selected.push(item);
+    usedGroups.add(group);
+  }
+
+  if (selected.length < limit) {
+    for (const item of sorted) {
+      if (selected.length >= limit) {
+        break;
+      }
+      if (selected.some((picked) => picked.id === item.id)) {
+        continue;
+      }
+      selected.push(item);
+    }
+  }
+
+  return selected;
+}
+
 function valueBiasFromOdd(odd) {
   if (!odd || !Number.isFinite(odd)) {
     return 0;
@@ -2387,6 +2448,7 @@ function buildParachuteSystem(matches, options) {
   const riskInput = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
   const precisionMode = String(options.precisionMode ?? "1") !== "0";
   const abstainMode = String(options.abstainMode ?? "1") !== "0";
+  const diversifyMode = String(options.diversifyMode ?? "1") !== "0";
   const risk = precisionMode ? clamp(riskInput * 0.9, 0.05, 0.85) : riskInput;
   const minStakeUnit = clamp(parseInputNumber(options.minStake, 1), 0.5, 5);
 
@@ -2466,7 +2528,21 @@ function buildParachuteSystem(matches, options) {
     );
   });
 
-  const candidatePool = highQualityPool.length >= 3 ? highQualityPool : enriched;
+  const qualityValues = enriched.map((item) => Number(item.qualityScore || 0));
+  const quantileThresholdValue = quantileThreshold(
+    qualityValues,
+    QUALITY_CONFIG.abstainQualityQuantile
+  );
+  const quantilePool = enriched.filter(
+    (item) => Number(item.qualityScore || 0) >= quantileThresholdValue
+  );
+
+  const candidatePool =
+    abstainMode && quantilePool.length >= 3
+      ? quantilePool
+      : highQualityPool.length >= 3
+        ? highQualityPool
+        : enriched;
   const abstainedMatches = Math.max(0, enriched.length - candidatePool.length);
 
   const aligned = chooseAlignedPool(candidatePool.slice(0, maxMatches));
@@ -2474,6 +2550,13 @@ function buildParachuteSystem(matches, options) {
   let selectedForSystem = aligned.pool
     .sort((a, b) => b.selectionScore - a.selectionScore)
     .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
+
+  if (diversifyMode) {
+    selectedForSystem = diversifySelectedMatches(
+      selectedForSystem,
+      QUALITY_CONFIG.maxPicksPerCoupon
+    );
+  }
 
   if (selectedForSystem.length < 3) {
     const fromCurrentWindow = [...enriched]
@@ -2513,6 +2596,13 @@ function buildParachuteSystem(matches, options) {
         .slice(0, QUALITY_CONFIG.maxPicksPerCoupon);
       selectedForSystem = fallbackAligned;
     }
+  }
+
+  if (diversifyMode) {
+    selectedForSystem = diversifySelectedMatches(
+      selectedForSystem,
+      QUALITY_CONFIG.maxPicksPerCoupon
+    );
   }
 
   const candidateTickets = buildCandidateTickets(selectedForSystem);
@@ -2633,15 +2723,18 @@ function buildParachuteSystem(matches, options) {
         activeTickets: activeSuccess.length,
         precisionMode,
         abstainMode,
+        diversifyMode,
         effectiveRisk: Number(risk.toFixed(3))
       },
       quality: {
         highQualityPool: highQualityPool.length,
+        quantilePool: quantilePool.length,
         candidatePool: candidatePool.length,
         abstainedMatches,
         minScore: QUALITY_CONFIG.minMainScore,
         minConfidence: QUALITY_CONFIG.minMainConfidence,
         minOdd: QUALITY_CONFIG.minMainOdd,
+        quantileThreshold: Number(quantileThresholdValue.toFixed(4)),
         avgQualityScore:
           selectedForSystem.length > 0
             ? Number(

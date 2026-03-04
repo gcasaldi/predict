@@ -1,5 +1,5 @@
 {
-  "savedAt": "2026-03-04T13:44:48.090Z",
+  "savedAt": "2026-03-04T13:50:38.387Z",
   "predictionHistory": [
     {
       "id": "pred-1772631885929-y4cp0z",
@@ -204,8 +204,46 @@
     "swapOutcomes": {}
   },
   "externalSignalState": {
-    "updatedAt": "2026-03-04T13:17:22.542Z",
+    "updatedAt": "2026-03-04T13:50:38.379Z",
     "byMatch": {
+      "event:sofa-15195733": {
+        "source": "sofascore-lineups",
+        "match": "NK Varaždin vs HNK Gorica",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15195733",
+        "lineupConfirmed": false,
+        "unavailableHome": 5,
+        "unavailableAway": 1,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T13:50:38.379Z"
+      },
+      "event:sofa-15604905": {
+        "source": "sofascore-lineups",
+        "match": "FK Vojvodina vs FK Trayal Kruševac",
+        "matchDate": "2026-03-04",
+        "eventId": "sofa-15604905",
+        "lineupConfirmed": true,
+        "unavailableHome": 0,
+        "unavailableAway": 0,
+        "suspendedHome": 0,
+        "suspendedAway": 0,
+        "rotationRiskHome": 0,
+        "rotationRiskAway": 0,
+        "xgEdgeHome": 0,
+        "xgPace": 0,
+        "oddsDriftHome": 0,
+        "marketConfidence": {},
+        "marketOddsDrift": {},
+        "updatedAt": "2026-03-04T13:50:38.281Z"
+      },
       "event:sofa-14214970": {
         "source": "sofascore-lineups",
         "match": "Semen Padang FC vs PSIM Yogyakarta",
@@ -223,7 +261,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.542Z"
+        "updatedAt": "2026-03-04T13:50:38.251Z"
       },
       "event:sofa-14598653": {
         "source": "sofascore-lineups",
@@ -242,7 +280,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.533Z"
+        "updatedAt": "2026-03-04T13:50:38.242Z"
       },
       "event:sofa-15158654": {
         "source": "sofascore-lineups",
@@ -261,7 +299,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.515Z"
+        "updatedAt": "2026-03-04T13:50:38.230Z"
       },
       "event:sofa-14068685": {
         "source": "sofascore-lineups",
@@ -280,7 +318,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.485Z"
+        "updatedAt": "2026-03-04T13:50:38.090Z"
       },
       "event:sofa-14068687": {
         "source": "sofascore-lineups",
@@ -299,7 +337,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.471Z"
+        "updatedAt": "2026-03-04T13:50:38.067Z"
       },
       "event:sofa-15479162": {
         "source": "sofascore-lineups",
@@ -318,7 +356,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.421Z"
+        "updatedAt": "2026-03-04T13:50:38.028Z"
       },
       "event:sofa-15604907": {
         "source": "sofascore-lineups",
@@ -337,7 +375,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.400Z"
+        "updatedAt": "2026-03-04T13:50:37.989Z"
       },
       "event:sofa-15187143": {
         "source": "sofascore-lineups",
@@ -356,7 +394,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.388Z"
+        "updatedAt": "2026-03-04T13:50:37.948Z"
       },
       "event:sofa-14068691": {
         "source": "sofascore-lineups",
@@ -375,7 +413,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.377Z"
+        "updatedAt": "2026-03-04T13:50:37.936Z"
       },
       "event:sofa-14326662": {
         "source": "sofascore-lineups",
@@ -394,7 +432,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.366Z"
+        "updatedAt": "2026-03-04T13:50:37.911Z"
       },
       "event:sofa-15466200": {
         "source": "sofascore-lineups",
@@ -413,7 +451,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.350Z"
+        "updatedAt": "2026-03-04T13:50:37.885Z"
       },
       "event:sofa-15479148": {
         "source": "sofascore-lineups",
@@ -432,7 +470,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.225Z"
+        "updatedAt": "2026-03-04T13:50:37.868Z"
       },
       "event:sofa-15570134": {
         "source": "sofascore-lineups",
@@ -451,7 +489,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.209Z"
+        "updatedAt": "2026-03-04T13:50:37.850Z"
       },
       "event:sofa-15592862": {
         "source": "sofascore-lineups",
@@ -470,7 +508,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.194Z"
+        "updatedAt": "2026-03-04T13:50:37.838Z"
       },
       "event:sofa-14326661": {
         "source": "sofascore-lineups",
@@ -489,7 +527,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.173Z"
+        "updatedAt": "2026-03-04T13:50:37.707Z"
       },
       "event:sofa-15238969": {
         "source": "sofascore-lineups",
@@ -508,7 +546,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.155Z"
+        "updatedAt": "2026-03-04T13:50:37.696Z"
       },
       "event:sofa-15238967": {
         "source": "sofascore-lineups",
@@ -527,7 +565,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.145Z"
+        "updatedAt": "2026-03-04T13:50:37.519Z"
       },
       "event:sofa-15336009": {
         "source": "sofascore-lineups",
@@ -546,7 +584,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.133Z"
+        "updatedAt": "2026-03-04T13:50:37.507Z"
       },
       "event:sofa-15188431": {
         "source": "sofascore-lineups",
@@ -565,7 +603,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.117Z"
+        "updatedAt": "2026-03-04T13:50:37.489Z"
       },
       "event:sofa-15254184": {
         "source": "sofascore-lineups",
@@ -584,7 +622,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.101Z"
+        "updatedAt": "2026-03-04T13:50:37.478Z"
       },
       "event:sofa-15238966": {
         "source": "sofascore-lineups",
@@ -603,7 +641,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.082Z"
+        "updatedAt": "2026-03-04T13:50:37.466Z"
       },
       "event:sofa-15238965": {
         "source": "sofascore-lineups",
@@ -622,7 +660,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.067Z"
+        "updatedAt": "2026-03-04T13:50:37.444Z"
       },
       "event:sofa-15566102": {
         "source": "sofascore-lineups",
@@ -641,7 +679,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.055Z"
+        "updatedAt": "2026-03-04T13:50:37.431Z"
       },
       "event:sofa-15254179": {
         "source": "sofascore-lineups",
@@ -660,7 +698,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.041Z"
+        "updatedAt": "2026-03-04T13:50:37.420Z"
       },
       "event:sofa-15254188": {
         "source": "sofascore-lineups",
@@ -679,7 +717,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.029Z"
+        "updatedAt": "2026-03-04T13:50:37.368Z"
       },
       "event:sofa-15253536": {
         "source": "sofascore-lineups",
@@ -698,7 +736,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.014Z"
+        "updatedAt": "2026-03-04T13:50:37.346Z"
       },
       "event:sofa-15269956": {
         "source": "sofascore-lineups",
@@ -717,7 +755,7 @@
         "oddsDriftHome": 0,
         "marketConfidence": {},
         "marketOddsDrift": {},
-        "updatedAt": "2026-03-04T13:17:22.002Z"
+        "updatedAt": "2026-03-04T13:50:37.334Z"
       }
     }
   }
