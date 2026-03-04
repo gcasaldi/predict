@@ -889,6 +889,14 @@ async function runOddsPortalScrapeJob(trigger = "scheduled") {
         summary.parseErrors += 1;
         continue;
       }
+
+      const hasCoreOdds = [parsed.row.odds_1, parsed.row.odds_x, parsed.row.odds_2]
+        .every((value) => Number.isFinite(Number(value)) && Number(value) > 1);
+      if (!hasCoreOdds) {
+        summary.parseErrors += 1;
+        continue;
+      }
+
       summary.rowsParsed += 1;
       rows.push(parsed.row);
     }
