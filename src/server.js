@@ -17,6 +17,8 @@ const aiTrainingState = {
   sampleSize: 0,
   marketHitRates: {}
 };
+const predictionHistory = [];
+const MAX_HISTORY_ITEMS = 500;
 
 const MARKET_UNIVERSE = {
   esito: [
@@ -108,9 +110,13 @@ function getMarketUniverseSummary() {
     ...MARKET_UNIVERSE,
     supportedNow: [
       "1",
+      "X",
       "2",
+      "12",
       "1X",
       "X2",
+      "DRAW NO BET 1",
+      "DRAW NO BET 2",
       "GG",
       "NG",
       "Over 1.5",
@@ -424,6 +430,14 @@ function scoreTicket(events) {
   );
 }
 
+function parseSofaEventId(rawId) {
+  const match = String(rawId || "").match(/sofa-(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -453,18 +467,143 @@ function marketHitsForEvent(event) {
   const secondHalfGoals = Math.max(0, totalGoals - firstHalfGoals);
 
   return {
+    "1": homeGoals > awayGoals,
+    "X": homeGoals === awayGoals,
+    "2": awayGoals > homeGoals,
+    "1X": homeGoals >= awayGoals,
+    X2: awayGoals >= homeGoals,
+    "12": homeGoals !== awayGoals,
     "OVER 0.5": totalGoals >= 1,
     "OVER 1.5": totalGoals >= 2,
     "OVER 2.5": totalGoals >= 3,
+    "OVER 3.5": totalGoals >= 4,
+    "UNDER 0.5": totalGoals === 0,
+    "UNDER 1.5": totalGoals <= 1,
     "UNDER 2.5": totalGoals <= 2,
     "UNDER 3.5": totalGoals <= 3,
     GG: homeGoals >= 1 && awayGoals >= 1,
     NG: homeGoals === 0 || awayGoals === 0,
+    "MULTIGOAL 1-3": totalGoals >= 1 && totalGoals <= 3,
+    "MULTIGOAL 2-4": totalGoals >= 2 && totalGoals <= 4,
+    "MULTIGOAL CASA 1-2": homeGoals >= 1 && homeGoals <= 2,
+    "MULTIGOAL OSPITE 1-2": awayGoals >= 1 && awayGoals <= 2,
     "OVER 0.5 1T": firstHalfGoals >= 1,
     "OVER 0.5 2T": secondHalfGoals >= 1,
     "HOME OVER 0.5": homeGoals >= 1,
-    "AWAY OVER 0.5": awayGoals >= 1
+    "AWAY OVER 0.5": awayGoals >= 1,
+    "1X + UNDER 3.5": homeGoals >= awayGoals && totalGoals <= 3,
+    "GG + OVER 2.5": homeGoals >= 1 && awayGoals >= 1 && totalGoals >= 3
   };
+}
+
+function historyStatusFromHit(hit) {
+  if (hit === true) {
+    return "win";
+  }
+  if (hit === false) {
+    return "loss";
+  }
+  return "pending";
+}
+
+function createHistorySummary(items) {
+  const decided = items.filter((item) => item.status === "win" || item.status === "loss");
+  const wins = decided.filter((item) => item.status === "win").length;
+  const losses = decided.filter((item) => item.status === "loss").length;
+  const pending = items.filter((item) => item.status === "pending").length;
+  const accuracy = decided.length ? Number((wins / decided.length).toFixed(4)) : null;
+  const avgOdd =
+    decided.length > 0
+      ? Number(
+          (
+            decided.reduce((acc, item) => acc + Number(item.mainOdd || 0), 0) /
+            decided.length
+          ).toFixed(2)
+        )
+      : null;
+
+  return {
+    total: items.length,
+    decided: decided.length,
+    wins,
+    losses,
+    pending,
+    accuracy,
+    avgOdd
+  };
+}
+
+async function refreshPredictionHistory(limit = 120) {
+  const today = toStartOfDay(new Date());
+  const pending = predictionHistory
+    .filter((item) => item.status === "pending")
+    .filter((item) => {
+      if (!item.matchDate) {
+        return false;
+      }
+      return toStartOfDay(new Date(item.matchDate)) <= today;
+    })
+    .slice(0, clamp(limit, 1, 200));
+
+  for (const item of pending) {
+    const sofaId = parseSofaEventId(item.eventId);
+    if (!sofaId) {
+      continue;
+    }
+
+    const eventPayload = await fetchJson(`${sofaBaseUrl}/event/${sofaId}`);
+    const event = eventPayload?.event;
+    const statusType = event?.status?.type;
+    const isFinished = statusType === "finished" || statusType === "after_penalties";
+    if (!isFinished) {
+      continue;
+    }
+
+    const hits = marketHitsForEvent(event);
+    const mainHit = hits[item.mainMarket];
+    const secondaryHit = item.secondaryMarket ? hits[item.secondaryMarket] : null;
+
+    item.status = historyStatusFromHit(mainHit);
+    item.mainHit = mainHit === true ? true : mainHit === false ? false : null;
+    item.secondaryHit =
+      secondaryHit === true ? true : secondaryHit === false ? false : null;
+    item.evaluatedAt = new Date().toISOString();
+    item.finalScore = `${Number(event?.homeScore?.current ?? 0)}-${Number(
+      event?.awayScore?.current ?? 0
+    )}`;
+  }
+}
+
+function pushPredictionHistory(system, meta = {}) {
+  const generatedAt = new Date().toISOString();
+  const selectedEvents = system?.selectedEvents || [];
+
+  for (const event of selectedEvents) {
+    predictionHistory.unshift({
+      id: `pred-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      generatedAt,
+      sourceType: meta.sourceType || "unknown",
+      focusCountry: meta.focusCountry || "Italia",
+      eventId: event.id || null,
+      match: event.match,
+      matchDate: event.matchDate || null,
+      mainMarket: event.mainPick,
+      secondaryMarket: event.secondaryPick || null,
+      mainOdd: event.odd,
+      secondaryOdd: event.secondaryOdd || null,
+      confidence: Number(event.confidence || 0),
+      safetyScore: Number(event.safetyScore || event.confidence || 0),
+      status: "pending",
+      mainHit: null,
+      secondaryHit: null,
+      finalScore: null,
+      evaluatedAt: null
+    });
+  }
+
+  if (predictionHistory.length > MAX_HISTORY_ITEMS) {
+    predictionHistory.splice(MAX_HISTORY_ITEMS);
+  }
 }
 
 async function recalibrateAiFromRecentResults(days = 30) {
@@ -543,10 +682,14 @@ function estimateOddFromConfidence(confidence, market) {
     "MULTIGOAL 2-4": 1.07,
     "1X + UNDER 3.5": 1.08,
     "GG + OVER 2.5": 1.1,
+    "DRAW NO BET 1": 1.06,
+    "DRAW NO BET 2": 1.06,
+    "12": 1.04,
     GG: 1.08,
     NG: 1.08,
     "UNDER 2.5": 1.09,
     "OVER 2.5": 1.09,
+    "OVER 3.5": 1.11,
     "1": 1.1,
     "2": 1.1
   };
@@ -641,9 +784,33 @@ function buildMarketCandidates(homeForm, awayForm) {
       rationale: "Esito secco casa in base a differenza PPG."
     },
     {
+      market: "X",
+      confidence: clamp(
+        0.2 + (1 - Math.min(Math.abs(ppgDiff), 1.4) / 1.4) * 0.34,
+        0.16,
+        0.54
+      ),
+      rationale: "Pareggio favorito quando le squadre sono equilibrate per forma."
+    },
+    {
       market: "2",
       confidence: clamp(0.42 - ppgDiff * 0.18, 0.2, 0.8),
       rationale: "Esito secco ospite in base a differenza PPG."
+    },
+    {
+      market: "12",
+      confidence: clamp(0.64 + Math.abs(ppgDiff) * 0.08, 0.42, 0.86),
+      rationale: "Riduce il rischio pareggio in match sbilanciati."
+    },
+    {
+      market: "DRAW NO BET 1",
+      confidence: clamp(0.5 + ppgDiff * 0.14, 0.24, 0.82),
+      rationale: "Protezione sul pareggio a favore casa."
+    },
+    {
+      market: "DRAW NO BET 2",
+      confidence: clamp(0.5 - ppgDiff * 0.14, 0.24, 0.82),
+      rationale: "Protezione sul pareggio a favore ospite."
     },
     {
       market: "OVER 1.5",
@@ -674,6 +841,11 @@ function buildMarketCandidates(homeForm, awayForm) {
       market: "OVER 2.5",
       confidence: clamp(0.41 + (expectedTotalGoals - 2.5) * 0.2, 0.2, 0.79),
       rationale: "Spinta offensiva aggregata sopra soglia 2.5."
+    },
+    {
+      market: "OVER 3.5",
+      confidence: clamp(0.28 + (expectedTotalGoals - 3.1) * 0.2, 0.12, 0.66),
+      rationale: "Match ad alta varianza gol."
     },
     {
       market: "UNDER 2.5",
@@ -760,6 +932,80 @@ function buildMarketCandidates(homeForm, awayForm) {
   return candidates;
 }
 
+function marketFamily(market) {
+  const token = String(market || "").toUpperCase();
+  if (["1", "X", "2", "1X", "X2", "12", "DRAW NO BET 1", "DRAW NO BET 2"].includes(token)) {
+    return "esito";
+  }
+  if (token.includes("MULTIGOAL")) {
+    return "multigol";
+  }
+  if (token.includes("+") || token.includes("COMBO")) {
+    return "combo";
+  }
+  if (token.includes("OVER") || token.includes("UNDER") || token === "GG" || token === "NG") {
+    return "goal";
+  }
+  return "altro";
+}
+
+function diversifyMarketCandidates(candidates, maxItems = 12) {
+  const sorted = [...(candidates || [])].sort((a, b) => b.confidence - a.confidence);
+  const byFamily = new Map();
+
+  for (const item of sorted) {
+    const family = marketFamily(item.market);
+    if (!byFamily.has(family)) {
+      byFamily.set(family, []);
+    }
+    byFamily.get(family).push(item);
+  }
+
+  const picked = [];
+  const used = new Set();
+  const familyPriority = ["esito", "goal", "multigol", "combo", "altro"];
+
+  for (const family of familyPriority) {
+    const bucket = byFamily.get(family) || [];
+    const top = bucket[0];
+    if (!top) {
+      continue;
+    }
+    const key = `${top.market}-${top.odd}`;
+    if (!used.has(key)) {
+      picked.push(top);
+      used.add(key);
+    }
+  }
+
+  for (const family of familyPriority) {
+    const bucket = byFamily.get(family) || [];
+    const second = bucket[1];
+    if (!second) {
+      continue;
+    }
+    const key = `${second.market}-${second.odd}`;
+    if (!used.has(key) && picked.length < maxItems) {
+      picked.push(second);
+      used.add(key);
+    }
+  }
+
+  for (const item of sorted) {
+    if (picked.length >= maxItems) {
+      break;
+    }
+    const key = `${item.market}-${item.odd}`;
+    if (used.has(key)) {
+      continue;
+    }
+    picked.push(item);
+    used.add(key);
+  }
+
+  return picked;
+}
+
 async function fetchTeamForm(teamId, cache) {
   if (!teamId) {
     return normalizeTeamForm(null);
@@ -792,9 +1038,15 @@ function chooseSafestMarket(candidates, risk) {
     "1X + UNDER 3.5": 0.05,
     "GG + OVER 2.5": -0.02,
     "UNDER 2.5": 0.02,
+    "DRAW NO BET 1": 0.04,
+    "DRAW NO BET 2": 0.04,
+    X: 1.1,
+    "12": 0.03,
+    X: 0.02,
     GG: 0.015,
     NG: 0.015,
     "OVER 2.5": 0.01,
+    "OVER 3.5": -0.01,
     "1": 0,
     "2": 0
   };
@@ -808,14 +1060,22 @@ function chooseSafestMarket(candidates, risk) {
     "UNDER 0.5",
     "UNDER 1.5",
     "OVER 0.5",
+    "HOME OVER 0.5",
+    "AWAY OVER 0.5",
+    "OVER 0.5 1T",
+    "OVER 0.5 2T",
+    "OVER 3.5",
     "1",
     "2",
     "GG + OVER 2.5"
   ]);
 
-  const minOdd = risk <= 0.2 ? 1.45 : risk <= 0.45 ? 1.35 : 1.25;
+  const minOdd = risk <= 0.2 ? 1.55 : risk <= 0.45 ? 1.45 : 1.35;
 
   const filtered = items.filter((item) => {
+    if (excludedWhenPrudent.has(item.market)) {
+      return false;
+    }
     if (risk <= 0.25 && excludedWhenPrudent.has(item.market)) {
       return false;
     }
@@ -845,10 +1105,105 @@ function chooseSafestMarket(candidates, risk) {
     .sort((a, b) => b.score - a.score)[0];
 }
 
+function pickTopMarkets(candidates, risk) {
+  const lowValueMarkets = new Set([
+    "OVER 0.5",
+    "HOME OVER 0.5",
+    "AWAY OVER 0.5",
+    "OVER 0.5 1T",
+    "OVER 0.5 2T"
+  ]);
+
+  const valueCandidates = (candidates || []).filter((item) => !lowValueMarkets.has(item.market));
+
+  const scored = (candidates || [])
+    .map((item) => {
+      const conservativeWeight = 1 - clamp(risk, 0.05, 0.95);
+      const valueWeight = clamp(risk, 0.05, 0.95) * 0.08;
+      const oddValue = clamp((item.odd - 1.25) / 2.8, 0, 0.2);
+      const hitRate = Number(aiTrainingState.marketHitRates[item.market] || 0.5);
+      const calibrationBoost = clamp((hitRate - 0.5) * 0.12, -0.03, 0.04);
+      const safetyBias = marketStabilityBias(item.market) * 0.5;
+      const score =
+        item.confidence + conservativeWeight * safetyBias + valueWeight * oddValue + calibrationBoost;
+      return {
+        ...item,
+        score: Number(score.toFixed(4))
+      };
+    })
+    .filter((item) => !lowValueMarkets.has(item.market))
+    .filter((item) => item.odd >= 1.35)
+    .filter((item) => item.confidence >= (risk <= 0.35 ? 0.58 : 0.54))
+    .sort((a, b) => b.score - a.score);
+
+  const fallbackMain = [...valueCandidates]
+    .filter((item) => item.odd >= 1.35)
+    .sort((a, b) => {
+      const scoreA = a.confidence + marketStabilityBias(a.market) * 0.35;
+      const scoreB = b.confidence + marketStabilityBias(b.market) * 0.35;
+      return scoreB - scoreA;
+    })[0];
+
+  const main = scored[0] || fallbackMain || chooseSafestMarket(valueCandidates, risk);
+  const secondary =
+    scored.find((item) => item.market !== main?.market) ||
+    [...valueCandidates]
+      .filter((item) => item.market !== main?.market)
+      .filter((item) => item.odd >= 1.35)
+      .sort((a, b) => b.confidence - a.confidence)[0] ||
+    null;
+
+  return {
+    main,
+    secondary
+  };
+}
+
+function allocateDiscreteStake(activeTickets, investableBudget, minStakeUnit = 1) {
+  const budget = Number(investableBudget || 0);
+  const unit = clamp(parseInputNumber(minStakeUnit, 1), 0.5, 5);
+  if (!activeTickets.length || budget < unit) {
+    return new Map();
+  }
+
+  const sorted = [...activeTickets].sort((a, b) => {
+    const scoreA = a.probability * 0.65 + a.evRatio * 0.35;
+    const scoreB = b.probability * 0.65 + b.evRatio * 0.35;
+    return scoreB - scoreA;
+  });
+
+  const alloc = new Map();
+  const maxTickets = Math.min(sorted.length, Math.max(1, Math.floor(budget / unit)));
+  const chosen = sorted.slice(0, maxTickets);
+  let remaining = Number(budget.toFixed(2));
+
+  for (const ticket of chosen) {
+    if (remaining < unit) {
+      break;
+    }
+    alloc.set(ticket.type, Number(unit.toFixed(2)));
+    remaining = Number((remaining - unit).toFixed(2));
+  }
+
+  while (remaining >= unit && chosen.length) {
+    const current = chosen.shift();
+    const currentStake = alloc.get(current.type) || 0;
+    alloc.set(current.type, Number((currentStake + unit).toFixed(2)));
+    remaining = Number((remaining - unit).toFixed(2));
+    chosen.push(current);
+  }
+
+  return alloc;
+}
+
 function marketStabilityBias(market) {
   const map = {
     "1X": 0.12,
     X2: 0.12,
+    "DRAW NO BET 1": 0.1,
+    "DRAW NO BET 2": 0.1,
+    "12": 0.08,
+    X: 0.06,
     "OVER 1.5": 0.1,
     "UNDER 3.5": 0.1,
     "HOME OVER 0.5": 0.09,
@@ -859,6 +1214,7 @@ function marketStabilityBias(market) {
     GG: 0.04,
     NG: 0.04,
     "OVER 2.5": 0.03,
+    "OVER 3.5": 0.01,
     "1": 0,
     "2": 0
   };
@@ -1024,7 +1380,8 @@ async function fetchSofascoreFootball(
       fetchTeamForm(awayTeamId, formCache)
     ]);
     const marketCandidates = buildMarketCandidates(homeForm, awayForm);
-    const predicted = chooseSafestMarket(marketCandidates, 0.1);
+    const diversifiedCandidates = diversifyMarketCandidates(marketCandidates, 14);
+    const predicted = chooseSafestMarket(diversifiedCandidates, 0.1);
 
     const kickoff = toKickoffFromDate(eventDate);
     picks.push({
@@ -1036,7 +1393,7 @@ async function fetchSofascoreFootball(
       confidence: predicted.confidence,
       selectionReason: predicted.rationale,
       safetyScore: predicted.score,
-      marketCandidates: marketCandidates.slice(0, 5),
+      marketCandidates: diversifiedCandidates,
       matchday: event?.roundInfo?.round
         ? `Giornata ${event.roundInfo.round}`
         : "Giornata ND",
@@ -1180,13 +1537,16 @@ function chooseAlignedPool(items) {
 }
 
 function normalizedEvent(match, useBackup = false) {
+  const backupPick = match.secondaryPick || match.backupPick;
+  const backupOdd = Number(match.secondaryOdd || oddForPick(match.odd, true));
+  const backupConfidence =
+    Number(match.secondaryConfidence) || clamp(match.confidence + 0.08, 0.35, 0.94);
+
   return {
     match: match.match,
-    pick: useBackup ? match.backupPick : match.mainPick,
-    odd: useBackup ? oddForPick(match.odd, true) : oddForPick(match.odd, false),
-    confidence: useBackup
-      ? clamp(match.confidence + 0.1, 0.35, 0.94)
-      : match.confidence,
+    pick: useBackup ? backupPick : match.mainPick,
+    odd: useBackup ? backupOdd : oddForPick(match.odd, false),
+    confidence: useBackup ? backupConfidence : match.confidence,
     role: useBackup ? "hedge" : "main"
   };
 }
@@ -1255,6 +1615,7 @@ function buildHeuristicStrategy(selectedMatches, risk, summary) {
     matchDecisions: selectedMatches.map((item) => ({
       match: item.match,
       selectedMarket: item.mainPick,
+      secondaryMarket: item.secondaryPick,
       confidence: Number(item.confidence.toFixed(3)),
       safetyScore: Number((item.safetyScore || item.confidence).toFixed(3)),
       reason: item.selectionReason || "Scelta del mercato con miglior stabilità stimata.",
@@ -1272,11 +1633,16 @@ function buildHeuristicStrategy(selectedMatches, risk, summary) {
 function buildParachuteSystem(matches, options) {
   const bankroll = parseInputNumber(options.bankroll, 100);
   const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
-  const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
+  const riskInput = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
+  const precisionMode = String(options.precisionMode ?? "1") !== "0";
+  const risk = precisionMode ? clamp(riskInput * 0.9, 0.05, 0.85) : riskInput;
+  const minStakeUnit = clamp(parseInputNumber(options.minStake, 1), 0.5, 5);
 
   const enriched = matches
     .map((match, index) => {
-      const bestMarket = chooseSafestMarket(match.marketCandidates || [], risk);
+      const chosen = pickTopMarkets(match.marketCandidates || [], risk);
+      const bestMarket = chosen.main;
+      const secondaryMarket = chosen.secondary;
       const odd = Number(bestMarket?.odd || match.odd) || null;
       const confidence = clamp(
         Number(bestMarket?.confidence || match.confidence) || confidenceFromOdd(odd),
@@ -1284,15 +1650,19 @@ function buildParachuteSystem(matches, options) {
         0.88
       );
       const mainPick = bestMarket?.market || match.pick || "1X";
-      const backupPick = match.backupPick || backupPickFor(mainPick);
+      const backupPick =
+        secondaryMarket?.market || match.backupPick || backupPickFor(mainPick);
 
       return {
         id: match.id || `m-${index + 1}`,
         match: match.match,
         mainPick,
+        secondaryPick: secondaryMarket?.market || backupPick,
         backupPick,
         odd,
+        secondaryOdd: Number(secondaryMarket?.odd || oddForPick(odd, true)),
         confidence,
+        secondaryConfidence: Number(secondaryMarket?.confidence || clamp(confidence + 0.08, 0.35, 0.92)),
         safetyScore: Number(bestMarket?.score || confidence),
         selectionReason: bestMarket?.rationale || match.selectionReason || "Scelta prudenziale su confidenza stimata.",
         marketCandidates: (match.marketCandidates || []).slice(0, 5),
@@ -1377,11 +1747,21 @@ function buildParachuteSystem(matches, options) {
       ? bankroll * riskInvestFraction
       : 0;
 
+  const discreteStakeMap = allocateDiscreteStake(
+    activeTickets,
+    investableBudget,
+    minStakeUnit
+  );
+
   const settledCandidates = candidateTickets.map((ticket) => {
     const isActive = activeTickets.some((active) => active.type === ticket.type);
-    const stake = isActive
+    const proportionalStake = isActive
       ? (ticket.probability / totalProbabilityWeight) * investableBudget
       : 0;
+    const stakeFromDiscrete = discreteStakeMap.get(ticket.type);
+    const stake = Number.isFinite(stakeFromDiscrete)
+      ? stakeFromDiscrete
+      : proportionalStake;
     const expectedReturn = stake * ticket.evRatio;
     return {
       ...ticket,
@@ -1436,6 +1816,18 @@ function buildParachuteSystem(matches, options) {
   return {
     sourceMatches: matches.length,
     selectedMatches: selectedForSystem.length,
+    selectedEvents: selectedForSystem.map((item) => ({
+      id: item.id,
+      match: item.match,
+      matchDate: item.matchDate,
+      source: item.source,
+      mainPick: item.mainPick,
+      secondaryPick: item.secondaryPick,
+      odd: item.odd,
+      secondaryOdd: item.secondaryOdd,
+      confidence: item.confidence,
+      safetyScore: item.safetyScore
+    })),
     risk,
     bankroll,
     tickets: settledTickets,
@@ -1447,6 +1839,15 @@ function buildParachuteSystem(matches, options) {
       combinationCount: allMainCombinations.length + 1,
       successProbability: Number(successProbabilityApprox.toFixed(4)),
       expectedEdge: Number((expectedPortfolio - bankroll).toFixed(2)),
+      budgetPlan: {
+        bankroll: Number(bankroll.toFixed(2)),
+        investableBudget: Number(investableBudget.toFixed(2)),
+        reserveStake,
+        minStakeUnit,
+        activeTickets: activeSuccess.length,
+        precisionMode,
+        effectiveRisk: Number(risk.toFixed(3))
+      },
       alignment: {
         matchday: selectedForSystem[0]?.matchday || "Giornata ND",
         matchDate: selectedForSystem[0]?.matchDate || aligned.selectedDate,
@@ -1468,6 +1869,7 @@ function buildParachuteSystem(matches, options) {
       "Selezioni allineate sulla stessa giornata; slot orario applicato quando disponibile.",
       "Copertura distribuita su tutte le partite con ticket hedge dedicati.",
       "Stake allocato in proporzione alla probabilità dei ticket attivi.",
+      `Piano budget: investiti ${Number(investableBudget.toFixed(2))}€ su ticket con quota minima utile; riserva ${reserveStake}€ per protezione.`,
       "Vincolo EV non negativo: se EV<0 la quota resta in riserva prudente.",
       "Le probabilità sono stime e non garantiscono profitto.",
       "Verifica sempre quote aggiornate prima di giocare."
@@ -1678,13 +2080,37 @@ async function askLlmForRefinement(payload) {
 }
 
 app.get("/api/health", (_, res) => {
+  const summary = createHistorySummary(predictionHistory);
   res.json({
     ok: true,
     sourceUrl,
     sofaBaseUrl,
     aiTraining: aiTrainingState,
+    predictionHistory: summary,
     marketUniverse: getMarketUniverseSummary()
   });
+});
+
+app.get("/api/predictions/history", async (req, res) => {
+  try {
+    const limit = clamp(parseInputNumber(req.query?.limit, 60), 1, 200);
+    const shouldRefresh = String(req.query?.refresh || "1") !== "0";
+    if (shouldRefresh) {
+      await refreshPredictionHistory(limit);
+    }
+
+    const items = predictionHistory.slice(0, limit);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      summary: createHistorySummary(items),
+      items
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Impossibile leggere lo storico predizioni.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
 });
 
 app.post("/api/train/recalibrate", async (req, res) => {
@@ -1760,6 +2186,10 @@ app.post("/api/predict", async (req, res) => {
       focusCountry
     );
     const system = buildParachuteSystem(riskAware, options);
+    pushPredictionHistory(system, {
+      sourceType: unified.source,
+      focusCountry
+    });
     const llm = await askLlmForRefinement(system);
 
     res.json({

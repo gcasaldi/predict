@@ -4,6 +4,8 @@ const summaryEl = document.querySelector("#summary");
 const strategyEl = document.querySelector("#strategy");
 const ticketsEl = document.querySelector("#tickets");
 const notesEl = document.querySelector("#notes");
+const historySummaryEl = document.querySelector("#historySummary");
+const historyListEl = document.querySelector("#historyList");
 
 const bankrollEl = document.querySelector("#bankroll");
 const startDateEl = document.querySelector("#startDate");
@@ -15,6 +17,7 @@ const teamQueryEl = document.querySelector("#teamQuery");
 const loadMatchesBtn = document.querySelector("#loadMatchesBtn");
 const generateBtn = document.querySelector("#generateBtn");
 const searchTeamBtn = document.querySelector("#searchTeamBtn");
+const refreshHistoryBtn = document.querySelector("#refreshHistoryBtn");
 const trainingMetaEl = document.querySelector("#trainingMeta");
 
 function euro(value) {
@@ -98,6 +101,9 @@ function renderMatches(matches, meta = {}) {
       <article class="item">
         <h3>${match.match}</h3>
         <p>Pick: <strong>${match.pick}</strong> · Backup: <strong>${match.backupPick}</strong></p>
+        ${(match.marketCandidates || []).length >= 2
+          ? `<p>Piano 2 mercati: <strong>${match.marketCandidates[0].market}</strong> · <strong>${match.marketCandidates[1].market}</strong></p>`
+          : ""}
         ${match.safetyScore ? `<p>Indice sicurezza: <strong>${Math.round(match.safetyScore * 100)}%</strong></p>` : ""}
         <p>Data: ${match.matchDate || "ND"} · Giornata: ${match.matchday || "ND"}</p>
         <p>Campionato: ${match.tournament || "ND"} · Paese: ${match.country || "ND"}</p>
@@ -146,6 +152,16 @@ function renderSystem(payload) {
       <div><span>Payout stimato max</span><strong>${euro(summary.payoutMax)}</strong></div>
       <div><span>Ritorno atteso</span><strong>${euro(summary.expectedPortfolio)}</strong></div>
     </div>
+    ${summary.budgetPlan
+      ? `<div class="summary-grid">
+          <div><span>Budget totale</span><strong>${euro(summary.budgetPlan.bankroll || 0)}</strong></div>
+          <div><span>Budget investito</span><strong>${euro(summary.budgetPlan.investableBudget || 0)}</strong></div>
+          <div><span>Riserva sicurezza</span><strong>${euro(summary.budgetPlan.reserveStake || 0)}</strong></div>
+          <div><span>Puntata minima ticket</span><strong>${euro(summary.budgetPlan.minStakeUnit || 1)}</strong></div>
+          <div><span>Ticket attivi</span><strong>${summary.budgetPlan.activeTickets || 0}</strong></div>
+          <div><span>Precision mode</span><strong>${summary.budgetPlan.precisionMode ? "ON" : "OFF"}</strong></div>
+        </div>`
+      : ""}
   `;
 
   ticketsEl.innerHTML = tickets
@@ -183,7 +199,7 @@ function renderSystem(payload) {
           ${(strategy.matchDecisions || [])
             .map(
               (decision) =>
-                `<li><strong>${decision.match}</strong>: ${decision.selectedMarket} (${Math.round((decision.safetyScore || 0) * 100)}%) — ${decision.reason}</li>`
+                `<li><strong>${decision.match}</strong>: ${decision.selectedMarket}${decision.secondaryMarket ? ` + ${decision.secondaryMarket}` : ""} (${Math.round((decision.safetyScore || 0) * 100)}%) — ${decision.reason}</li>`
             )
             .join("")}
         </ul>
@@ -204,6 +220,77 @@ function renderSystem(payload) {
     </ul>
     ${llmNotes}
   `;
+}
+
+function renderPredictionHistory(payload) {
+  const summary = payload?.summary || {};
+  const items = payload?.items || [];
+
+  if (historySummaryEl) {
+    const accuracyText =
+      typeof summary.accuracy === "number"
+        ? `${Math.round(summary.accuracy * 100)}%`
+        : "n/d";
+    historySummaryEl.innerHTML = `
+      <div class="summary-grid">
+        <div><span>Eventi tracciati</span><strong>${summary.total || 0}</strong></div>
+        <div><span>Valutati</span><strong>${summary.decided || 0}</strong></div>
+        <div><span>Corretti</span><strong>${summary.wins || 0}</strong></div>
+        <div><span>Errati</span><strong>${summary.losses || 0}</strong></div>
+        <div><span>In attesa</span><strong>${summary.pending || 0}</strong></div>
+        <div><span>Accuratezza</span><strong>${accuracyText}</strong></div>
+      </div>
+    `;
+  }
+
+  if (!historyListEl) {
+    return;
+  }
+
+  if (!items.length) {
+    historyListEl.innerHTML = "<p>Nessuna predizione storica disponibile.</p>";
+    return;
+  }
+
+  historyListEl.innerHTML = items
+    .map((item) => {
+      const statusLabel =
+        item.status === "win"
+          ? "✅ Corretta"
+          : item.status === "loss"
+            ? "❌ Errata"
+            : "⏳ In attesa";
+
+      return `
+      <article class="item">
+        <h3>${item.match}</h3>
+        <p>Data match: ${item.matchDate || "ND"} · Esito: <strong>${statusLabel}</strong> ${item.finalScore ? `· Score: ${item.finalScore}` : ""}</p>
+        <p>Mercato principale: <strong>${item.mainMarket}</strong> (quota ${item.mainOdd ?? "n/d"})</p>
+        <p>Mercato secondario: <strong>${item.secondaryMarket || "n/d"}</strong> ${item.secondaryOdd ? `(quota ${item.secondaryOdd})` : ""}</p>
+        <p>Confidenza: ${Math.round((item.confidence || 0) * 100)}% · Sicurezza: ${Math.round((item.safetyScore || 0) * 100)}%</p>
+      </article>
+    `;
+    })
+    .join("");
+}
+
+async function loadPredictionHistory() {
+  if (historyListEl) {
+    historyListEl.innerHTML = "<p>Verifica storico in corso...</p>";
+  }
+
+  try {
+    const response = await fetch("/api/predictions/history?limit=80&refresh=1");
+    if (!response.ok) {
+      throw new Error("Errore nel recupero dello storico predizioni.");
+    }
+    const payload = await response.json();
+    renderPredictionHistory(payload);
+  } catch (error) {
+    if (historyListEl) {
+      historyListEl.innerHTML = `<p class="error">${error.message}</p>`;
+    }
+  }
 }
 
 async function loadMatches() {
@@ -281,6 +368,7 @@ async function generateSystem() {
 
     const payload = await response.json();
     renderSystem(payload);
+    loadPredictionHistory();
   } catch (error) {
     summaryEl.innerHTML = `<p class="error">${error.message}</p>`;
   }
@@ -289,6 +377,7 @@ async function generateSystem() {
 loadMatchesBtn.addEventListener("click", loadMatches);
 generateBtn.addEventListener("click", generateSystem);
 searchTeamBtn.addEventListener("click", loadMatches);
+refreshHistoryBtn?.addEventListener("click", loadPredictionHistory);
 riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
@@ -297,3 +386,4 @@ startDateEl.addEventListener("change", loadMatches);
 updateRiskLabel();
 ensureStartDateDefault();
 loadMatches();
+loadPredictionHistory();
