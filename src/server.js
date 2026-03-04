@@ -92,6 +92,36 @@ const dailyTrainingState = {
   jobs: []
 };
 const MAX_DAILY_TRAINING_REPORTS = 400;
+const ODDS_SCRAPER_CONFIG = {
+  enabled: true,
+  intervalMs: 45 * 60 * 1000,
+  maxLeaguePages: 12,
+  maxEventsPerLeague: 12,
+  maxEventsTotal: 100,
+  userAgent:
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+};
+const oddsScrapingState = {
+  updatedAt: null,
+  status: "idle",
+  lastRunAt: null,
+  source: "oddsportal",
+  rows: [],
+  summary: {
+    rowsFetched: 0,
+    rowsParsed: 0,
+    rowsInserted: 0,
+    rowsUpdated: 0,
+    httpErrors: 0,
+    parseErrors: 0,
+    schemaChanged: {
+      changed: false,
+      diff: []
+    },
+    rateLimited: false,
+    sourceLatencyMs: 0
+  }
+};
 const calibrationState = {
   updatedAt: null,
   bins: []
@@ -650,6 +680,289 @@ function serializeDailyReport(report, include = []) {
     alertsNewCount: report.alertsNewCount,
     alerts: includeAlerts ? report.alerts : undefined
   };
+}
+
+function toOddsportalDateToken(dateValue = new Date()) {
+  const d = new Date(dateValue);
+  const yyyy = String(d.getUTCFullYear());
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}`;
+}
+
+function decodeHtmlEntities(input = "") {
+  return String(input)
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#34;", '"')
+    .replaceAll("&#039;", "'")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("\\/", "/");
+}
+
+async function fetchText(url) {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": ODDS_SCRAPER_CONFIG.userAgent,
+      Accept: "text/html,application/json;q=0.9,*/*;q=0.8"
+    }
+  });
+  if (!response.ok) {
+    return { ok: false, status: response.status, text: "" };
+  }
+  const text = await response.text();
+  return { ok: true, status: response.status, text };
+}
+
+function extractOddsportalLeagueLinks(matchesHtml) {
+  const found = new Set();
+  const regex = /\/football\/[a-z0-9-]+\/[a-z0-9-]+\//gi;
+  let match = regex.exec(matchesHtml);
+  while (match) {
+    const token = String(match[0] || "").toLowerCase();
+    if (
+      token !== "/football/results/" &&
+      token !== "/football/standings/" &&
+      !token.includes("/team/") &&
+      !token.includes("/results/") &&
+      !token.includes("/standings/")
+    ) {
+      found.add(token);
+    }
+    match = regex.exec(matchesHtml);
+  }
+  return [...found].slice(0, ODDS_SCRAPER_CONFIG.maxLeaguePages);
+}
+
+function extractOddsportalEventLinks(leagueHtml) {
+  const found = new Set();
+  const regex = /\/football\/[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9-]+-[A-Za-z0-9]{8}\//g;
+  let match = regex.exec(leagueHtml);
+  while (match) {
+    found.add(String(match[0]));
+    match = regex.exec(leagueHtml);
+  }
+  return [...found].slice(0, ODDS_SCRAPER_CONFIG.maxEventsPerLeague);
+}
+
+function extractJsonField(text, pattern) {
+  const hit = String(text || "").match(pattern);
+  return hit?.[1] ? decodeHtmlEntities(hit[1]) : null;
+}
+
+function parseOddsFromPayload(payloadText) {
+  const text = String(payloadText || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      const source = JSON.stringify(parsed);
+      const triple = source.match(/(\d\.\d{2}).{0,60}(\d\.\d{2}).{0,60}(\d\.\d{2})/);
+      if (triple) {
+        return {
+          odds_1: Number(triple[1]),
+          odds_x: Number(triple[2]),
+          odds_2: Number(triple[3])
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+async function extractOddsportalEventRow(eventUrl) {
+  const result = await fetchText(eventUrl);
+  if (!result.ok) {
+    return { httpError: true, row: null, parseError: false };
+  }
+
+  const html = result.text;
+  const home = extractJsonField(html, /&quot;home&quot;:&quot;([^&]([^&]|&amp;)*?)&quot;/);
+  const away = extractJsonField(html, /&quot;away&quot;:&quot;([^&]([^&]|&amp;)*?)&quot;/);
+  const kickoffUnixRaw = extractJsonField(html, /&quot;startDate&quot;:(\d{9,12})/);
+  const kickoffIsoRaw = extractJsonField(html, /"startDate"\s*:\s*"([0-9T:+-]{16,30})"/);
+  const preMatchUrl = extractJsonField(html, /&quot;requestPreMatch&quot;:\{&quot;url&quot;:&quot;([^&]+?)&quot;/);
+
+  let kickoff_time = null;
+  if (kickoffUnixRaw && Number.isFinite(Number(kickoffUnixRaw))) {
+    kickoff_time = new Date(Number(kickoffUnixRaw) * 1000).toISOString();
+  } else if (kickoffIsoRaw) {
+    const parsed = new Date(kickoffIsoRaw);
+    kickoff_time = Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  let bookmaker = null;
+  const streamBook = extractJsonField(html, /&quot;stream&quot;:\{[^}]*&quot;name&quot;:&quot;([^&]+?)&quot;/);
+  if (streamBook) {
+    bookmaker = streamBook;
+  }
+
+  let odds = null;
+  if (preMatchUrl) {
+    const preMatchFullUrl = preMatchUrl.startsWith("http")
+      ? preMatchUrl
+      : `${new URL(eventUrl).origin}${preMatchUrl}${Date.now()}`;
+    const payload = await fetchText(preMatchFullUrl);
+    if (payload.ok) {
+      odds = parseOddsFromPayload(payload.text);
+    }
+  }
+
+  if (!home || !away) {
+    return { httpError: false, row: null, parseError: true };
+  }
+
+  return {
+    httpError: false,
+    parseError: false,
+    row: {
+      source: "oddsportal",
+      eventUrl,
+      home_team: home,
+      away_team: away,
+      kickoff_time,
+      odds_1: odds?.odds_1 ?? null,
+      odds_x: odds?.odds_x ?? null,
+      odds_2: odds?.odds_2 ?? null,
+      bookmaker,
+      fetchedAt: new Date().toISOString()
+    }
+  };
+}
+
+async function runOddsPortalScrapeJob(trigger = "scheduled") {
+  const started = Date.now();
+  const todayToken = toOddsportalDateToken(new Date());
+  const summary = defaultIngestionSource();
+  oddsScrapingState.status = "running";
+  oddsScrapingState.lastRunAt = new Date().toISOString();
+
+  try {
+    const listUrl = `https://www.oddsportal.com/matches/football/${todayToken}`;
+    const list = await fetchText(listUrl);
+    if (!list.ok) {
+      summary.httpErrors += 1;
+      summary.rateLimited = list.status === 429;
+      throw new Error(`OddsPortal list fetch failed (${list.status})`);
+    }
+
+    const leagues = extractOddsportalLeagueLinks(list.text);
+    const eventUrls = new Set();
+
+    for (const leaguePath of leagues) {
+      const leagueUrl = `https://www.oddsportal.com${leaguePath}`;
+      const leaguePayload = await fetchText(leagueUrl);
+      if (!leaguePayload.ok) {
+        summary.httpErrors += 1;
+        summary.rateLimited = summary.rateLimited || leaguePayload.status === 429;
+        continue;
+      }
+      const links = extractOddsportalEventLinks(leaguePayload.text);
+      for (const link of links) {
+        eventUrls.add(`https://www.oddsportal.com${link}`);
+        if (eventUrls.size >= ODDS_SCRAPER_CONFIG.maxEventsTotal) {
+          break;
+        }
+      }
+      if (eventUrls.size >= ODDS_SCRAPER_CONFIG.maxEventsTotal) {
+        break;
+      }
+    }
+
+    summary.rowsFetched = eventUrls.size;
+    const rows = [];
+    for (const eventUrl of [...eventUrls]) {
+      const parsed = await extractOddsportalEventRow(eventUrl);
+      if (parsed.httpError) {
+        summary.httpErrors += 1;
+        continue;
+      }
+      if (parsed.parseError || !parsed.row) {
+        summary.parseErrors += 1;
+        continue;
+      }
+      summary.rowsParsed += 1;
+      rows.push(parsed.row);
+    }
+
+    const previousMap = new Map(
+      (oddsScrapingState.rows || []).map((row) => [
+        `${normalizeSearchText(row.home_team)}|${normalizeSearchText(row.away_team)}|${String(row.kickoff_time || "")}`,
+        row
+      ])
+    );
+
+    const nextMap = new Map();
+    for (const row of rows) {
+      const key = `${normalizeSearchText(row.home_team)}|${normalizeSearchText(row.away_team)}|${String(row.kickoff_time || "")}`;
+      const existed = previousMap.has(key);
+      if (existed) {
+        summary.rowsUpdated += 1;
+      } else {
+        summary.rowsInserted += 1;
+      }
+      nextMap.set(key, row);
+    }
+
+    const schema = ["home_team", "away_team", "kickoff_time", "odds_1", "odds_x", "odds_2", "bookmaker"];
+    summary.schemaChanged = {
+      changed: false,
+      diff: []
+    };
+    summary.sourceLatencyMs = Date.now() - started;
+
+    oddsScrapingState.rows = [...nextMap.values()].slice(0, 2000);
+    oddsScrapingState.summary = {
+      ...summary,
+      schemaSnapshot: schema
+    };
+    oddsScrapingState.updatedAt = new Date().toISOString();
+    oddsScrapingState.status = "ok";
+
+    if (summary.rowsParsed === 0) {
+      pushMonitorAlert(
+        "odds",
+        "OddsPortal scrape senza righe parsate",
+        { trigger, rowsFetched: summary.rowsFetched, parseErrors: summary.parseErrors },
+        "warn",
+        "ODDSPORTAL_PARSE_EMPTY"
+      );
+    }
+
+    await persistAiMemory();
+    return {
+      source: "oddsportal",
+      trigger,
+      ...summary
+    };
+  } catch (error) {
+    oddsScrapingState.status = "error";
+    oddsScrapingState.updatedAt = new Date().toISOString();
+    pushMonitorAlert(
+      "odds",
+      "Errore scraping OddsPortal",
+      {
+        trigger,
+        detail: error instanceof Error ? error.message : "Errore sconosciuto"
+      },
+      "warn",
+      "ODDSPORTAL_SCRAPE_ERROR"
+    );
+    await persistAiMemory().catch(() => null);
+    return {
+      source: "oddsportal",
+      trigger,
+      ...summary
+    };
+  }
 }
 
 function buildCalibrationFromHistory() {
@@ -1417,7 +1730,9 @@ async function persistAiMemory() {
     externalSignalState,
     featureStoreState,
     calibrationState,
-    monitoringState
+    monitoringState,
+    dailyTrainingState,
+    oddsScrapingState
   };
 
   await fs.mkdir(MEMORY_DIR, { recursive: true });
@@ -1471,6 +1786,26 @@ async function loadAiMemory() {
       monitoringState.alerts = Array.isArray(storedMonitoring.alerts)
         ? storedMonitoring.alerts
         : monitoringState.alerts;
+    }
+
+    const storedDailyTraining = parsed.dailyTrainingState;
+    if (storedDailyTraining && typeof storedDailyTraining === "object") {
+      dailyTrainingState.lastJobId = storedDailyTraining.lastJobId || null;
+      dailyTrainingState.updatedAt = storedDailyTraining.updatedAt || null;
+      dailyTrainingState.jobs = Array.isArray(storedDailyTraining.jobs)
+        ? storedDailyTraining.jobs.slice(0, MAX_DAILY_TRAINING_REPORTS)
+        : [];
+    }
+
+    const storedOddsScraping = parsed.oddsScrapingState;
+    if (storedOddsScraping && typeof storedOddsScraping === "object") {
+      oddsScrapingState.status = storedOddsScraping.status || "idle";
+      oddsScrapingState.lastRunAt = storedOddsScraping.lastRunAt || null;
+      oddsScrapingState.updatedAt = storedOddsScraping.updatedAt || null;
+      oddsScrapingState.rows = Array.isArray(storedOddsScraping.rows)
+        ? storedOddsScraping.rows.slice(0, 2000)
+        : [];
+      oddsScrapingState.summary = storedOddsScraping.summary || defaultIngestionSource();
     }
   } catch {
     return;
@@ -2287,7 +2622,8 @@ async function runDailyAutoTraining({ trigger = "cron" } = {}) {
     ingestion: {
       understat: defaultIngestionSource(),
       football_data_uk: defaultIngestionSource(),
-      openfootball: defaultIngestionSource()
+      openfootball: defaultIngestionSource(),
+      oddsportal: defaultIngestionSource()
     },
     resolver: {
       matchesResolved: 0,
@@ -2338,8 +2674,10 @@ async function runDailyAutoTraining({ trigger = "cron" } = {}) {
   try {
     const footballData = await ingestFootballDataTraining(new Date());
     const openfootball = await ingestOpenfootballSnapshot(new Date());
+    const oddsportal = await runOddsPortalScrapeJob("daily_training");
     jobReport.ingestion.football_data_uk = footballData;
     jobReport.ingestion.openfootball = openfootball;
+    jobReport.ingestion.oddsportal = oddsportal;
 
     await recalibrateAiFromRecentResults(TRAINING_CONFIG.lookbackDays, TRAINING_CONFIG.scope);
     await refreshPredictionHistory(220);
@@ -2369,7 +2707,8 @@ async function runDailyAutoTraining({ trigger = "cron" } = {}) {
       status: "ok",
       sources: {
         footballData,
-        openfootball
+        openfootball,
+        oddsportal
       }
     };
     monitoringState.mapping = {
@@ -4531,6 +4870,9 @@ app.post("/api/train/autotune", async (req, res) => {
 app.post("/api/train/daily", async (_req, res) => {
   try {
     const report = await runDailyAutoTraining();
+    if (report?.jobId) {
+      res.setHeader("X-Job-Id", report.jobId);
+    }
     res.json(report);
   } catch (error) {
     console.error("/api/train/daily error", error);
@@ -4539,6 +4881,42 @@ app.post("/api/train/daily", async (_req, res) => {
       detail: error instanceof Error ? error.message : "Errore sconosciuto"
     });
   }
+});
+
+app.get("/api/train/daily/last", (req, res) => {
+  const includeParam = String(req.query?.include || "").trim();
+  const include = includeParam
+    ? includeParam.split(",").map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const last = dailyTrainingState.jobs[0] || null;
+
+  if (!last) {
+    return res.status(404).json({
+      error: "Nessun job giornaliero disponibile"
+    });
+  }
+
+  res.setHeader("X-Job-Id", last.jobId);
+  return res.json(serializeDailyReport(last, include));
+});
+
+app.get("/api/train/daily/history", (req, res) => {
+  const includeParam = String(req.query?.include || "").trim();
+  const include = includeParam
+    ? includeParam.split(",").map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const limitRaw = parseInputNumber(req.query?.limit, 30);
+  const limit = clamp(Number(limitRaw || 30), 1, MAX_DAILY_TRAINING_REPORTS);
+  const rows = dailyTrainingState.jobs
+    .slice(0, limit)
+    .map((job) => serializeDailyReport(job, include));
+
+  res.json({
+    updatedAt: dailyTrainingState.updatedAt || null,
+    total: dailyTrainingState.jobs.length,
+    limit,
+    items: rows
+  });
 });
 
 app.get("/api/monitoring", (_req, res) => {
@@ -4555,6 +4933,27 @@ app.get("/api/monitoring", (_req, res) => {
       confidenceScale: calibrationState.confidenceScale,
       reliabilityByBucket: calibrationState.reliabilityByBucket
     }
+  });
+});
+
+app.get("/api/odds/snapshot", (_req, res) => {
+  res.json({
+    status: oddsScrapingState.status,
+    lastRunAt: oddsScrapingState.lastRunAt,
+    updatedAt: oddsScrapingState.updatedAt,
+    summary: oddsScrapingState.summary,
+    count: oddsScrapingState.rows.length,
+    rows: oddsScrapingState.rows.slice(0, 200)
+  });
+});
+
+app.post("/api/odds/scrape", async (_req, res) => {
+  const report = await runOddsPortalScrapeJob("manual");
+  res.json({
+    ok: true,
+    report,
+    count: oddsScrapingState.rows.length,
+    updatedAt: oddsScrapingState.updatedAt
   });
 });
 
@@ -4671,6 +5070,21 @@ app.listen(port, () => {
   console.log(`Predict app attiva su http://localhost:${port}`);
   loadAiMemory().catch(() => null);
   recalibrateAiFromRecentResults(30).catch(() => null);
+
+  if (ODDS_SCRAPER_CONFIG.enabled) {
+    setTimeout(() => {
+      runOddsPortalScrapeJob("bootstrap").catch((error) => {
+        console.error("OddsPortal bootstrap scraping error", error);
+      });
+    }, 8_000);
+
+    setInterval(() => {
+      runOddsPortalScrapeJob("schedule").catch((error) => {
+        console.error("OddsPortal scheduled scraping error", error);
+      });
+    }, Math.max(30 * 60 * 1000, Number(ODDS_SCRAPER_CONFIG.intervalMs) || 45 * 60 * 1000));
+  }
+
   if (TRAINING_CONFIG.autoEnabled) {
     const intervalMs = Number(TRAINING_CONFIG.autoIntervalMs) > 0
       ? Number(TRAINING_CONFIG.autoIntervalMs)
