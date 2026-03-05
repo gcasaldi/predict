@@ -1500,6 +1500,12 @@ function toStartOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function addDays(baseDate, days) {
+  const next = new Date(baseDate);
+  next.setDate(next.getDate() + Number(days || 0));
+  return next;
+}
+
 function parseDateFromText(text, referenceDate = new Date()) {
   const match = text.match(/\b(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\b/);
   if (!match) {
@@ -1563,6 +1569,35 @@ function parseIsoDateInput(value, fallback = new Date()) {
     return toStartOfDay(fallback);
   }
   return toStartOfDay(parsed);
+}
+
+function resolveDateWindow({ startDateInput, endDateInput, timeRangeInput, fallbackStart = new Date() }) {
+  const startDate = parseIsoDateInput(startDateInput, fallbackStart);
+  const hasExplicitStartDate = typeof startDateInput === "string" && String(startDateInput).trim().length > 0;
+  const hasExplicitEndDate = typeof endDateInput === "string" && String(endDateInput).trim().length > 0;
+
+  let computedEndDate = null;
+  if (hasExplicitEndDate) {
+    computedEndDate = parseIsoDateInput(endDateInput, addDays(startDate, 6));
+    if (computedEndDate < startDate) {
+      computedEndDate = toStartOfDay(startDate);
+    }
+  }
+
+  const derivedDays = computedEndDate
+    ? Math.floor((computedEndDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1
+    : parseInputNumber(timeRangeInput, 7);
+  const timeRangeDays = clamp(derivedDays, 1, 14);
+  const endDate = addDays(startDate, Math.max(0, timeRangeDays - 1));
+
+  return {
+    startDate,
+    endDate,
+    startDateIso: toIsoDate(startDate),
+    endDateIso: toIsoDate(endDate),
+    timeRangeDays,
+    hasExplicitWindow: hasExplicitStartDate || hasExplicitEndDate
+  };
 }
 
 function withDateWindow(matches, days = 7, referenceDate = new Date(), strict = false) {
@@ -2229,6 +2264,37 @@ function createHistorySummary(items) {
   };
 }
 
+function resolveHistoryItemFromWarehouse(item) {
+  const { home, away } = parseMatchTeams(item?.match);
+  if (!home || !away) {
+    return null;
+  }
+
+  const homeKey = normalizeTeamKey(home);
+  const awayKey = normalizeTeamKey(away);
+  const targetDate = String(item?.matchDate || "").slice(0, 10);
+
+  const candidates = (publicDataWarehouseState.rows || [])
+    .filter((row) => normalizeTeamKey(row?.home_team) === homeKey)
+    .filter((row) => normalizeTeamKey(row?.away_team) === awayKey)
+    .filter((row) => Number.isFinite(Number(row?.home_goals)) && Number.isFinite(Number(row?.away_goals)))
+    .sort((a, b) => String(b.match_date || "").localeCompare(String(a.match_date || "")));
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const exact = candidates.find((row) => String(row?.match_date || "").slice(0, 10) === targetDate);
+  const picked = exact || candidates[0];
+
+  return {
+    homeGoals: Number(picked.home_goals),
+    awayGoals: Number(picked.away_goals),
+    matchDate: String(picked.match_date || "").slice(0, 10),
+    source: "public_warehouse"
+  };
+}
+
 async function refreshPredictionHistory(limit = 120) {
   const today = toStartOfDay(new Date());
   const pending = predictionHistory
@@ -2239,35 +2305,66 @@ async function refreshPredictionHistory(limit = 120) {
       }
       return toStartOfDay(new Date(item.matchDate)) <= today;
     })
+    .sort((a, b) => String(a.matchDate || "").localeCompare(String(b.matchDate || "")))
     .slice(0, clamp(limit, 1, 200));
+
+  if (pending.length) {
+    await runPublicDataPipeline(new Date(), "history_resolution").catch(() => null);
+  }
 
   let hasUpdates = false;
   for (const item of pending) {
+    let resolved = false;
     const sofaId = parseSofaEventId(item.eventId);
-    if (!sofaId) {
-      continue;
+    if (sofaId) {
+      const eventPayload = await fetchJson(`${sofaBaseUrl}/event/${sofaId}`);
+      const event = eventPayload?.event;
+      const statusType = event?.status?.type;
+      const isFinished = statusType === "finished" || statusType === "after_penalties";
+      if (isFinished) {
+        const hits = marketHitsForEvent(event);
+        const mainHit = hits[item.mainMarket];
+        const secondaryHit = item.secondaryMarket ? hits[item.secondaryMarket] : null;
+
+        item.status = historyStatusFromHit(mainHit);
+        item.mainHit = mainHit === true ? true : mainHit === false ? false : null;
+        item.secondaryHit =
+          secondaryHit === true ? true : secondaryHit === false ? false : null;
+        item.evaluatedAt = new Date().toISOString();
+        item.finalScore = `${Number(event?.homeScore?.current ?? 0)}-${Number(
+          event?.awayScore?.current ?? 0
+        )}`;
+        item.resolutionSource = "sofascore";
+        resolved = true;
+      }
     }
 
-    const eventPayload = await fetchJson(`${sofaBaseUrl}/event/${sofaId}`);
-    const event = eventPayload?.event;
-    const statusType = event?.status?.type;
-    const isFinished = statusType === "finished" || statusType === "after_penalties";
-    if (!isFinished) {
-      continue;
+    if (!resolved) {
+      const warehouseResult = resolveHistoryItemFromWarehouse(item);
+      if (warehouseResult) {
+        const event = {
+          homeScore: { current: warehouseResult.homeGoals, period1: 0 },
+          awayScore: { current: warehouseResult.awayGoals, period1: 0 }
+        };
+        const hits = marketHitsForEvent(event);
+        const mainHit = hits[item.mainMarket];
+        const secondaryHit = item.secondaryMarket ? hits[item.secondaryMarket] : null;
+
+        item.status = historyStatusFromHit(mainHit);
+        item.mainHit = mainHit === true ? true : mainHit === false ? false : null;
+        item.secondaryHit =
+          secondaryHit === true ? true : secondaryHit === false ? false : null;
+        item.evaluatedAt = new Date().toISOString();
+        item.finalScore = `${warehouseResult.homeGoals}-${warehouseResult.awayGoals}`;
+        item.matchDate = warehouseResult.matchDate || item.matchDate;
+        item.resolutionSource = warehouseResult.source;
+        resolved = true;
+      }
     }
 
-    const hits = marketHitsForEvent(event);
-    const mainHit = hits[item.mainMarket];
-    const secondaryHit = item.secondaryMarket ? hits[item.secondaryMarket] : null;
-
-    item.status = historyStatusFromHit(mainHit);
-    item.mainHit = mainHit === true ? true : mainHit === false ? false : null;
-    item.secondaryHit =
-      secondaryHit === true ? true : secondaryHit === false ? false : null;
-    item.evaluatedAt = new Date().toISOString();
-    item.finalScore = `${Number(event?.homeScore?.current ?? 0)}-${Number(
-      event?.awayScore?.current ?? 0
-    )}`;
+    if (!resolved) {
+      continue;
+    }
 
     if (item.status === "win" || item.status === "loss") {
       registerMarketOutcome(item.mainMarket, item.mainHit);
@@ -4837,7 +4934,8 @@ async function fetchSofascoreFootball(
   return picks;
 }
 
-async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate = new Date()) {
+async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate = new Date(), options = {}) {
+  const allowNearestFallback = options?.allowNearestFallback === true;
   const startDateIso = toIsoDate(toStartOfDay(startDate));
   const cacheKey = `${timeRangeDays}-${maxMatches}-${startDateIso}`;
   const cached = unifiedCache.get(cacheKey);
@@ -4847,14 +4945,13 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
 
   const staleWarehouse = !publicDataWarehouseState.updatedAt ||
     Date.now() - Date.parse(publicDataWarehouseState.updatedAt) > 8 * 60 * 60 * 1000;
-  if (staleWarehouse) {
-    await runPublicDataPipeline(new Date(), "auto_unified_refresh").catch(() => null);
+  if (staleWarehouse && publicDataWarehouseState.status !== "running") {
+    runPublicDataPipeline(new Date(), "auto_unified_refresh").catch(() => null);
   }
 
   let oddsRows = oddsScrapingState.rows || [];
-  if (!oddsRows.length) {
-    await runOddsPortalScrapeJob("auto_unified_bootstrap").catch(() => null);
-    oddsRows = oddsScrapingState.rows || [];
+  if (!oddsRows.length && oddsScrapingState.status !== "running") {
+    runOddsPortalScrapeJob("auto_unified_bootstrap").catch(() => null);
   }
 
   const warehouseByTeam = new Map();
@@ -4868,13 +4965,13 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
 
   const upcoming = [];
   const startDay = toStartOfDay(startDate).getTime();
-  const endDay = startDay + timeRangeDays * 24 * 60 * 60 * 1000;
+  const endExclusive = startDay + timeRangeDays * 24 * 60 * 60 * 1000;
 
   const dateInRange = (isoDate, fromDate, days) => {
     const from = toStartOfDay(fromDate).getTime();
     const to = from + days * 24 * 60 * 60 * 1000;
     const point = new Date(String(isoDate || "")).getTime();
-    return Number.isFinite(point) && point >= from && point <= to;
+    return Number.isFinite(point) && point >= from && point < to;
   };
 
   const baseFromWarehouse = (publicDataWarehouseState.rows || [])
@@ -4930,7 +5027,7 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
       continue;
     }
     const time = kickoffDate.getTime();
-    if (time < startDay || time > endDay) {
+    if (time < startDay || time >= endExclusive) {
       continue;
     }
 
@@ -4995,59 +5092,90 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
     });
   }
 
-  if (!upcoming.length) {
-    const latestQuoted = (publicDataWarehouseState.rows || [])
-      .filter((row) => hasRequiredQuoteFields(row))
-      .sort((a, b) => String(b.match_date || "").localeCompare(String(a.match_date || "")))
-      .slice(0, Math.max(maxMatches * 4, 20));
-
-    for (const row of latestQuoted) {
-      const marketOutput = buildMarketOutputForMatch({
-        id: row.match_id,
-        match: `${row.home_team} vs ${row.away_team}`
-      }, row);
-      const candidates = marketOutput.marketCandidates;
-      const chosen = chooseSafestMarket(candidates, 0.1);
-      upcoming.push({
-        id: `whf-${randomUUID().slice(0, 8)}`,
-        match: `${row.home_team} vs ${row.away_team}`,
-        pick: chosen.market,
-        backupPick: backupPickFor(chosen.market),
-        odd: chosen.odd,
-        confidence: chosen.confidence,
-        selectionReason: chosen.rationale,
-        safetyScore: chosen.score,
-        externalSignal: null,
-        marketCandidates: candidates,
-        matchday: "Giornata ND",
-        tournament: row.league || "Campionato",
-        country: "ND",
-        kickoff: "12:00",
-        kickoffSlot: slotFromKickoff("12:00"),
-        matchDate: row.match_date,
-        source: "public-warehouse-fallback",
-        raw: `Warehouse fallback ${row.match_id}`,
-        match_id: row.match_id,
-        lambda_home: marketOutput.lambda_home,
-        lambda_away: marketOutput.lambda_away,
-        predictions: marketOutput.predictions,
-        top_predictions: marketOutput.top_predictions,
-        recommended_options: marketOutput.recommended_options,
-        pastStats: {
-          homePpg: Number(row.form_home_5 || 1),
-          awayPpg: Number(row.form_away_5 || 1),
-          homeGF: Number(row.attack_home_5 || 1),
-          awayGF: Number(row.attack_away_5 || 1)
-        }
-      });
-    }
-  }
-
   const payload = {
     matches: upcoming.slice(0, Math.max(maxMatches * 4, maxMatches)),
     source: "public-web-dataset",
     startDate: startDateIso
   };
+
+  if (!payload.matches.length && allowNearestFallback) {
+    const quotedRows = (publicDataWarehouseState.rows || []).filter((row) => hasRequiredQuoteFields(row));
+    if (quotedRows.length) {
+      const startDayMs = toStartOfDay(startDate).getTime();
+      const sortedByNearest = [...quotedRows].sort((a, b) => {
+        const da = new Date(`${String(a.match_date)}T12:00:00Z`).getTime() - startDayMs;
+        const db = new Date(`${String(b.match_date)}T12:00:00Z`).getTime() - startDayMs;
+        const pa = da >= 0 ? 0 : 1;
+        const pb = db >= 0 ? 0 : 1;
+        if (pa !== pb) {
+          return pa - pb;
+        }
+        return Math.abs(da) - Math.abs(db);
+      });
+
+      const nearestDate = String(sortedByNearest[0]?.match_date || "").slice(0, 10);
+      const nearestWeekStart = toStartOfDay(new Date(`${nearestDate}T00:00:00Z`));
+      const nearestWeekEnd = new Date(
+        nearestWeekStart.getTime() + timeRangeDays * 24 * 60 * 60 * 1000
+      );
+      const nearestBatch = sortedByNearest
+        .filter((row) => dateInRange(`${row.match_date}T12:00:00Z`, nearestWeekStart, timeRangeDays))
+        .slice(0, Math.max(maxMatches * 4, maxMatches));
+
+      payload.matches = nearestBatch.map((row) => {
+        const marketOutput = buildMarketOutputForMatch(
+          {
+            id: row.match_id,
+            match: `${row.home_team} vs ${row.away_team}`
+          },
+          row
+        );
+        const candidates = marketOutput.marketCandidates;
+        const chosen = chooseSafestMarket(candidates, 0.1);
+        return {
+          id: `near-${randomUUID().slice(0, 8)}`,
+          match: `${row.home_team} vs ${row.away_team}`,
+          pick: chosen.market,
+          backupPick: backupPickFor(chosen.market),
+          odd: chosen.odd,
+          confidence: chosen.confidence,
+          selectionReason: chosen.rationale,
+          safetyScore: chosen.score,
+          externalSignal: null,
+          marketCandidates: candidates,
+          matchday: "Giornata ND",
+          tournament: row.league || "Campionato",
+          country: "ND",
+          kickoff: "12:00",
+          kickoffSlot: slotFromKickoff("12:00"),
+          matchDate: row.match_date,
+          source: "public-warehouse-nearest",
+          raw: `Warehouse nearest ${row.match_id}`,
+          match_id: row.match_id,
+          lambda_home: marketOutput.lambda_home,
+          lambda_away: marketOutput.lambda_away,
+          predictions: marketOutput.predictions,
+          top_predictions: marketOutput.top_predictions,
+          recommended_options: marketOutput.recommended_options,
+          pastStats: {
+            homePpg: Number(row.form_home_5 || 1),
+            awayPpg: Number(row.form_away_5 || 1),
+            homeGF: Number(row.attack_home_5 || 1),
+            awayGF: Number(row.attack_away_5 || 1)
+          }
+        };
+      });
+      payload.source = "public-web-dataset-nearest";
+      payload.fallback = {
+        reason: "no_matches_in_requested_window",
+        nearestDate,
+        nearestWeekStart: toIsoDate(nearestWeekStart),
+        nearestWeekEnd: toIsoDate(addDays(nearestWeekStart, Math.max(0, timeRangeDays - 1))),
+        rangeDays: timeRangeDays
+      };
+    }
+  }
+
   unifiedCache.set(cacheKey, { createdAt: Date.now(), payload });
   return payload;
 }
@@ -6104,16 +6232,22 @@ app.post("/api/odds/scrape", async (_req, res) => {
 app.get("/api/matches", async (_, res) => {
   try {
     const risk = clamp(parseInputNumber(_.query?.risk, 0.45), 0.05, 0.95);
-    const maxMatches = clamp(parseInputNumber(_.query?.maxMatches, 10), 2, 20);
-    const timeRangeDays = clamp(parseInputNumber(_.query?.timeRangeDays, 7), 1, 14);
+    const maxMatches = clamp(parseInputNumber(_.query?.maxMatches, 20), 2, 40);
     const focusCountry = String(_.query?.focusCountry || "Italia");
     const teamQuery = String(_.query?.teamQuery || "");
-    const startDate = parseIsoDateInput(_.query?.startDate, new Date());
-    const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
+    const dateWindow = resolveDateWindow({
+      startDateInput: _.query?.startDate,
+      endDateInput: _.query?.endDate,
+      timeRangeInput: _.query?.timeRangeDays,
+      fallbackStart: toStartOfDay(new Date())
+    });
+    const unified = await getUnifiedMatches(dateWindow.timeRangeDays, maxMatches, dateWindow.startDate, {
+      allowNearestFallback: !dateWindow.hasExplicitWindow
+    });
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const qualityGate = applyDataQualityGate(teamFiltered, {
       startDate: unified.startDate,
-      timeRangeDays
+      timeRangeDays: dateWindow.timeRangeDays
     });
     const riskAware = rankMatchesForRisk(
       applyRiskProfileToMatches(qualityGate.accepted, risk),
@@ -6128,13 +6262,20 @@ app.get("/api/matches", async (_, res) => {
       focusCountry,
       teamQuery,
       startDate: unified.startDate,
+      endDate: dateWindow.endDateIso,
+      weekWindow: {
+        start: unified.startDate,
+        end: dateWindow.endDateIso,
+        rangeDays: dateWindow.timeRangeDays
+      },
+      fallback: unified.fallback || null,
       risk,
       count: riskAware.length,
       qualityAudit: {
         accepted: qualityGate.accepted.length,
         rejected: qualityGate.rejected.length
       },
-      timeRangeDays,
+      timeRangeDays: dateWindow.timeRangeDays,
       marketUniverse: getMarketUniverseSummary(),
       matches: riskAware
     });
@@ -6188,19 +6329,25 @@ app.get("/api/matches/today", async (_req, res) => {
 app.post("/api/predict", async (req, res) => {
   try {
     const options = req.body || {};
-    const timeRangeDays = clamp(parseInputNumber(options.timeRangeDays, 7), 1, 14);
     const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
-    const maxMatches = clamp(parseInputNumber(options.maxMatches, 5), 2, 10);
+    const maxMatches = clamp(parseInputNumber(options.maxMatches, 8), 2, 20);
     const focusCountry = String(options.focusCountry || "Italia");
     const teamQuery = String(options.teamQuery || "");
     const trackAllPredictions = String(options.trackAllPredictions ?? "1") !== "0";
     const trackLimit = clamp(parseInputNumber(options.trackLimit, 50), 3, 200);
-    const startDate = parseIsoDateInput(options.startDate, new Date());
-    const unified = await getUnifiedMatches(timeRangeDays, maxMatches, startDate);
+    const dateWindow = resolveDateWindow({
+      startDateInput: options.startDate,
+      endDateInput: options.endDate,
+      timeRangeInput: options.timeRangeDays,
+      fallbackStart: toStartOfDay(new Date())
+    });
+    const unified = await getUnifiedMatches(dateWindow.timeRangeDays, maxMatches, dateWindow.startDate, {
+      allowNearestFallback: !dateWindow.hasExplicitWindow
+    });
     const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
     const qualityGate = applyDataQualityGate(teamFiltered, {
       startDate: unified.startDate,
-      timeRangeDays
+      timeRangeDays: dateWindow.timeRangeDays
     });
     const minimallyValid = teamFiltered.filter((item) => {
       const [homeRaw = "", awayRaw = ""] = String(item.match || "").split(/\s+vs\s+/i);
@@ -6291,7 +6438,14 @@ app.post("/api/predict", async (req, res) => {
       focusCountry,
       teamQuery,
       startDate: unified.startDate,
-      timeRangeDays,
+      endDate: dateWindow.endDateIso,
+      weekWindow: {
+        start: unified.startDate,
+        end: dateWindow.endDateIso,
+        rangeDays: dateWindow.timeRangeDays
+      },
+      fallback: unified.fallback || null,
+      timeRangeDays: dateWindow.timeRangeDays,
       aiTraining: aiTrainingState,
       marketUniverse: getMarketUniverseSummary(),
       tracking: {

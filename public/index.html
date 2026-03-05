@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Predict Calcio</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="container">
@@ -22,12 +22,16 @@
 
       <section class="card controls">
         <h2>Parametri</h2>
-        <p>Filtro temporale attivo: solo partite future nei prossimi 7 giorni.</p>
+        <p>Filtro temporale: scegli una finestra date per vedere solo le partite corrette della giornata.</p>
         <p id="trainingMeta"></p>
         <div class="grid">
           <label>
-            Data inizio (range 7 giorni)
+            Data inizio
             <input id="startDate" type="date" />
+          </label>
+          <label>
+            Data fine
+            <input id="endDate" type="date" />
           </label>
           <label>
             Budget totale (€)
@@ -42,6 +46,12 @@
             <input id="risk" type="range" min="5" max="95" step="5" value="45" />
             <small id="riskLabel">45% · Bilanciato</small>
           </label>
+        </div>
+        <div class="calendar-presets" aria-label="Preset finestra temporale">
+          <button type="button" data-range-days="1">Oggi</button>
+          <button type="button" data-range-days="3">3 giorni</button>
+          <button type="button" data-range-days="7">7 giorni</button>
+          <button type="button" data-range-days="14">14 giorni</button>
         </div>
         <div class="search-row">
           <label>
@@ -81,6 +91,7 @@
       </section>
     </main>
 
-    <script src="/app.js" defer></script>
+    <script src="./config.js"></script>
+    <script src="./app.js" defer></script>
   </body>
 </html>

@@ -42,11 +42,39 @@ npm run dev
 http://localhost:3000
 ```
 
+## Pubblicazione su GitHub Pages
+
+GitHub Pages pubblica solo il frontend statico (`public/`).
+Le API (`/api/matches`, `/api/predict`, ecc.) devono restare su un backend Node separato.
+
+1. Assicurati che esista un backend raggiungibile via URL HTTPS (es. Render, Railway, VPS).
+
+2. Configura l'URL API nel frontend:
+
+```bash
+cp public/config.example.js public/config.js
+```
+
+Poi imposta:
+
+```js
+window.PREDICT_CONFIG = {
+  API_BASE_URL: "https://tuo-backend.example.com"
+};
+```
+
+3. Esegui commit e push su `main`.
+	Il workflow `/.github/workflows/deploy-pages.yml` pubblica automaticamente `public/` su GitHub Pages.
+
+4. In GitHub: `Settings > Pages`.
+	Come source seleziona `GitHub Actions`.
+
 ## Parametri principali
 
 - **Budget totale**: importo da distribuire sui ticket.
 - **Massimo partite**: quante partite includere nel sistema.
 - **Soglia rischio (0-1)**: più alta = più ticket di copertura.
+- **Finestra temporale (mini calendario)**: scegli `Data inizio` e `Data fine` per filtrare le partite corrette per giornata.
 
 ## Come funziona il paracadute
 

@@ -9,16 +9,27 @@ const historyListEl = document.querySelector("#historyList");
 
 const bankrollEl = document.querySelector("#bankroll");
 const startDateEl = document.querySelector("#startDate");
+const endDateEl = document.querySelector("#endDate");
 const maxMatchesEl = document.querySelector("#maxMatches");
 const riskEl = document.querySelector("#risk");
 const riskLabelEl = document.querySelector("#riskLabel");
 const teamQueryEl = document.querySelector("#teamQuery");
+const datePresetButtons = document.querySelectorAll(".calendar-presets [data-range-days]");
 
 const loadMatchesBtn = document.querySelector("#loadMatchesBtn");
 const generateBtn = document.querySelector("#generateBtn");
 const searchTeamBtn = document.querySelector("#searchTeamBtn");
 const refreshHistoryBtn = document.querySelector("#refreshHistoryBtn");
 const trainingMetaEl = document.querySelector("#trainingMeta");
+
+const API_BASE_URL = String(window.PREDICT_CONFIG?.API_BASE_URL || "").trim().replace(/\/$/, "");
+
+function apiUrl(path) {
+  if (!API_BASE_URL) {
+    return path;
+  }
+  return `${API_BASE_URL}${path}`;
+}
 
 function euro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -70,17 +81,64 @@ function formatIsoDateLocal(date) {
   return `${year}-${month}-${day}`;
 }
 
-function ensureStartDateDefault() {
-  if (!startDateEl) {
+function addDaysIso(isoDate, days) {
+  const parsed = new Date(`${String(isoDate)}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return isoDate;
+  }
+  parsed.setDate(parsed.getDate() + Number(days || 0));
+  return formatIsoDateLocal(parsed);
+}
+
+function daysBetweenInclusive(startIso, endIso) {
+  const start = new Date(`${String(startIso)}T00:00:00`);
+  const end = new Date(`${String(endIso)}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 7;
+  }
+  const ms = end.getTime() - start.getTime();
+  const day = 24 * 60 * 60 * 1000;
+  return Math.floor(ms / day) + 1;
+}
+
+function normalizeDateWindowFromInputs() {
+  const todayIso = formatIsoDateLocal(new Date());
+  const start = startDateEl?.value || todayIso;
+  let end = endDateEl?.value || addDaysIso(start, 6);
+
+  if (String(end) < String(start)) {
+    end = start;
+    if (endDateEl) {
+      endDateEl.value = end;
+    }
+  }
+
+  const rawDays = daysBetweenInclusive(start, end);
+  const timeRangeDays = Math.max(1, Math.min(14, rawDays));
+  const normalizedEnd = addDaysIso(start, timeRangeDays - 1);
+
+  if (endDateEl && endDateEl.value !== normalizedEnd) {
+    endDateEl.value = normalizedEnd;
+  }
+
+  return {
+    startDate: start,
+    endDate: normalizedEnd,
+    timeRangeDays
+  };
+}
+
+function ensureDateWindowDefaults() {
+  if (!startDateEl || !endDateEl) {
     return;
   }
-  if (startDateEl.value) {
-    return;
+  if (!startDateEl.value) {
+    startDateEl.value = formatIsoDateLocal(new Date());
   }
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  startDateEl.value = formatIsoDateLocal(tomorrow);
-  startDateEl.min = formatIsoDateLocal(tomorrow);
+  if (!endDateEl.value) {
+    endDateEl.value = addDaysIso(startDateEl.value, 6);
+  }
+  normalizeDateWindowFromInputs();
 }
 
 function renderMatches(matches, meta = {}) {
@@ -91,8 +149,12 @@ function renderMatches(matches, meta = {}) {
   }
 
   const teamInfo = meta.teamQuery ? ` · Filtro squadra: ${meta.teamQuery}` : "";
-  const startInfo = meta.startDate ? ` · Dal: ${meta.startDate}` : "";
-  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni${startInfo}${teamInfo}`;
+  const rangeInfo = meta.startDate && meta.endDate
+    ? ` · Finestra: ${meta.startDate} → ${meta.endDate}`
+    : meta.startDate
+      ? ` · Dal: ${meta.startDate}`
+      : "";
+  matchesMetaEl.textContent = `Fonte: ${meta.sourceType || "n/d"} · Range: ${meta.timeRangeDays || 7} giorni${rangeInfo}${teamInfo}`;
 
   matchesEl.innerHTML = matches
     .slice(0, 20)
@@ -280,7 +342,7 @@ async function loadPredictionHistory() {
   }
 
   try {
-    const response = await fetch("/api/predictions/history?limit=80&refresh=1");
+    const response = await fetch(apiUrl("/api/predictions/history?limit=80&refresh=1"));
     if (!response.ok) {
       throw new Error("Errore nel recupero dello storico predizioni.");
     }
@@ -288,7 +350,10 @@ async function loadPredictionHistory() {
     renderPredictionHistory(payload);
   } catch (error) {
     if (historyListEl) {
-      historyListEl.innerHTML = `<p class="error">${error.message}</p>`;
+      const baseHint = API_BASE_URL
+        ? `API configurata: ${API_BASE_URL}`
+        : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
+      historyListEl.innerHTML = `<p class="error">${error.message} ${baseHint}</p>`;
     }
   }
 }
@@ -296,17 +361,19 @@ async function loadPredictionHistory() {
 async function loadMatches() {
   matchesEl.innerHTML = "<p>Caricamento...</p>";
   try {
+    const dateWindow = normalizeDateWindowFromInputs();
     const params = new URLSearchParams({
       risk: String(currentRiskDecimal()),
       maxMatches: String(parseLocalizedNumber(maxMatchesEl.value, 10)),
-      timeRangeDays: "7",
+      timeRangeDays: String(dateWindow.timeRangeDays),
       focusCountry: "Italia",
-      startDate: startDateEl?.value || "",
+      startDate: dateWindow.startDate,
+      endDate: dateWindow.endDate,
       teamQuery: (teamQueryEl?.value || "").trim()
     });
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(`/api/matches?${params.toString()}`, {
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const response = await fetch(apiUrl(`/api/matches?${params.toString()}`), {
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -324,6 +391,7 @@ async function loadMatches() {
       sourceType: payload.sourceType,
       timeRangeDays: payload.timeRangeDays,
       startDate: payload.startDate,
+      endDate: payload.endDate,
       teamQuery: payload.teamQuery
     });
   } catch (error) {
@@ -335,7 +403,10 @@ async function loadMatches() {
       error?.name === "AbortError"
         ? "Recupero partite troppo lento, riprova tra pochi secondi."
         : error.message;
-    matchesEl.innerHTML = `<p class="error">${message}</p>`;
+    const baseHint = API_BASE_URL
+      ? `API configurata: ${API_BASE_URL}`
+      : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
+    matchesEl.innerHTML = `<p class="error">${message} ${baseHint}</p>`;
   }
 }
 
@@ -346,7 +417,8 @@ async function generateSystem() {
   notesEl.innerHTML = "";
 
   try {
-    const response = await fetch("/api/predict", {
+    const dateWindow = normalizeDateWindowFromInputs();
+    const response = await fetch(apiUrl("/api/predict"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -355,9 +427,10 @@ async function generateSystem() {
         bankroll: parseLocalizedNumber(bankrollEl.value, 100),
         maxMatches: parseLocalizedNumber(maxMatchesEl.value, 5),
         risk: currentRiskDecimal(),
-        timeRangeDays: 7,
+        timeRangeDays: dateWindow.timeRangeDays,
         focusCountry: "Italia",
-        startDate: startDateEl?.value || "",
+        startDate: dateWindow.startDate,
+        endDate: dateWindow.endDate,
         teamQuery: (teamQueryEl?.value || "").trim()
       })
     });
@@ -370,7 +443,10 @@ async function generateSystem() {
     renderSystem(payload);
     loadPredictionHistory();
   } catch (error) {
-    summaryEl.innerHTML = `<p class="error">${error.message}</p>`;
+    const baseHint = API_BASE_URL
+      ? `API configurata: ${API_BASE_URL}`
+      : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
+    summaryEl.innerHTML = `<p class="error">${error.message} ${baseHint}</p>`;
   }
 }
 
@@ -382,8 +458,20 @@ riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
 startDateEl.addEventListener("change", loadMatches);
+endDateEl?.addEventListener("change", loadMatches);
+
+for (const btn of datePresetButtons) {
+  btn.addEventListener("click", () => {
+    const days = parseLocalizedNumber(btn.dataset.rangeDays, 7);
+    const start = startDateEl?.value || formatIsoDateLocal(new Date());
+    if (endDateEl) {
+      endDateEl.value = addDaysIso(start, Math.max(1, Math.min(14, days)) - 1);
+    }
+    loadMatches();
+  });
+}
 
 updateRiskLabel();
-ensureStartDateDefault();
+ensureDateWindowDefaults();
 loadMatches();
 loadPredictionHistory();
