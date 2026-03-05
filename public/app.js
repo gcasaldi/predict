@@ -23,12 +23,22 @@ const refreshHistoryBtn = document.querySelector("#refreshHistoryBtn");
 const trainingMetaEl = document.querySelector("#trainingMeta");
 
 const API_BASE_URL = String(window.PREDICT_CONFIG?.API_BASE_URL || "").trim().replace(/\/$/, "");
+const runningOnGithubPages = typeof window !== "undefined" && window.location?.hostname.endsWith("github.io");
+const canUseSameOriginApi = !runningOnGithubPages;
+const hasApiEndpoint = Boolean(API_BASE_URL) || canUseSameOriginApi;
 
 function apiUrl(path) {
   if (!API_BASE_URL) {
     return path;
   }
   return `${API_BASE_URL}${path}`;
+}
+
+function apiSetupHint() {
+  if (API_BASE_URL) {
+    return `API configurata: ${API_BASE_URL}`;
+  }
+  return "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
 }
 
 function euro(value) {
@@ -126,6 +136,15 @@ function normalizeDateWindowFromInputs() {
     endDate: normalizedEnd,
     timeRangeDays
   };
+}
+
+function updatePresetActiveState(days) {
+  for (const btn of datePresetButtons) {
+    const btnDays = parseLocalizedNumber(btn.dataset.rangeDays, 0);
+    const active = Number(btnDays) === Number(days);
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
 }
 
 function ensureDateWindowDefaults() {
@@ -337,6 +356,13 @@ function renderPredictionHistory(payload) {
 }
 
 async function loadPredictionHistory() {
+  if (!hasApiEndpoint) {
+    if (historyListEl) {
+      historyListEl.innerHTML = `<p class="error">Storico non disponibile in modalità statica. ${apiSetupHint()}</p>`;
+    }
+    return;
+  }
+
   if (historyListEl) {
     historyListEl.innerHTML = "<p>Verifica storico in corso...</p>";
   }
@@ -350,18 +376,25 @@ async function loadPredictionHistory() {
     renderPredictionHistory(payload);
   } catch (error) {
     if (historyListEl) {
-      const baseHint = API_BASE_URL
-        ? `API configurata: ${API_BASE_URL}`
-        : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
-      historyListEl.innerHTML = `<p class="error">${error.message} ${baseHint}</p>`;
+      historyListEl.innerHTML = `<p class="error">${error.message} ${apiSetupHint()}</p>`;
     }
   }
 }
 
 async function loadMatches() {
+  const dateWindow = normalizeDateWindowFromInputs();
+
+  if (!hasApiEndpoint) {
+    if (trainingMetaEl) {
+      trainingMetaEl.textContent = "Modalità GitHub Pages: interfaccia attiva, API non configurata.";
+    }
+    matchesMetaEl.textContent = `Range selezionato: ${dateWindow.startDate} → ${dateWindow.endDate} (${dateWindow.timeRangeDays} giorni)`;
+    matchesEl.innerHTML = `<p class="error">Partite non caricabili finché non imposti API_BASE_URL. ${apiSetupHint()}</p>`;
+    return;
+  }
+
   matchesEl.innerHTML = "<p>Caricamento...</p>";
   try {
-    const dateWindow = normalizeDateWindowFromInputs();
     const params = new URLSearchParams({
       risk: String(currentRiskDecimal()),
       maxMatches: String(parseLocalizedNumber(maxMatchesEl.value, 10)),
@@ -403,14 +436,19 @@ async function loadMatches() {
       error?.name === "AbortError"
         ? "Recupero partite troppo lento, riprova tra pochi secondi."
         : error.message;
-    const baseHint = API_BASE_URL
-      ? `API configurata: ${API_BASE_URL}`
-      : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
-    matchesEl.innerHTML = `<p class="error">${message} ${baseHint}</p>`;
+    matchesEl.innerHTML = `<p class="error">${message} ${apiSetupHint()}</p>`;
   }
 }
 
 async function generateSystem() {
+  if (!hasApiEndpoint) {
+    summaryEl.innerHTML = `<p class="error">Generazione sistema non disponibile senza backend API. ${apiSetupHint()}</p>`;
+    strategyEl.innerHTML = "";
+    ticketsEl.innerHTML = "";
+    notesEl.innerHTML = "";
+    return;
+  }
+
   summaryEl.innerHTML = "<p>Calcolo sistema...</p>";
   strategyEl.innerHTML = "";
   ticketsEl.innerHTML = "";
@@ -443,10 +481,7 @@ async function generateSystem() {
     renderSystem(payload);
     loadPredictionHistory();
   } catch (error) {
-    const baseHint = API_BASE_URL
-      ? `API configurata: ${API_BASE_URL}`
-      : "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
-    summaryEl.innerHTML = `<p class="error">${error.message} ${baseHint}</p>`;
+    summaryEl.innerHTML = `<p class="error">${error.message} ${apiSetupHint()}</p>`;
   }
 }
 
@@ -454,11 +489,10 @@ loadMatchesBtn.addEventListener("click", loadMatches);
 generateBtn.addEventListener("click", generateSystem);
 searchTeamBtn.addEventListener("click", loadMatches);
 refreshHistoryBtn?.addEventListener("click", loadPredictionHistory);
+
 riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
-startDateEl.addEventListener("change", loadMatches);
-endDateEl?.addEventListener("change", loadMatches);
 
 for (const btn of datePresetButtons) {
   btn.addEventListener("click", () => {
@@ -467,11 +501,25 @@ for (const btn of datePresetButtons) {
     if (endDateEl) {
       endDateEl.value = addDaysIso(start, Math.max(1, Math.min(14, days)) - 1);
     }
+    updatePresetActiveState(Math.max(1, Math.min(14, days)));
     loadMatches();
   });
 }
 
+endDateEl?.addEventListener("change", () => {
+  const windowRange = normalizeDateWindowFromInputs();
+  updatePresetActiveState(windowRange.timeRangeDays);
+  loadMatches();
+});
+
+startDateEl.addEventListener("change", () => {
+  const windowRange = normalizeDateWindowFromInputs();
+  updatePresetActiveState(windowRange.timeRangeDays);
+  loadMatches();
+});
+
 updateRiskLabel();
 ensureDateWindowDefaults();
+updatePresetActiveState(normalizeDateWindowFromInputs().timeRangeDays);
 loadMatches();
 loadPredictionHistory();
