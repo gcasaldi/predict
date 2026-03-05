@@ -190,6 +190,8 @@ const monitoringState = {
   alerts: []
 };
 const MAX_MONITOR_ALERTS = 300;
+const LEARNING_REFRESH_MIN_INTERVAL_MS = 20 * 60 * 1000;
+let lastLearningRefreshAt = 0;
 
 const MARKET_UNIVERSE = {
   esito: [
@@ -2383,6 +2385,98 @@ async function refreshPredictionHistory(limit = 120) {
     dedupePredictionHistory();
     await persistAiMemory();
   }
+}
+
+async function maybeRefreshLearning(limit = 120, force = false) {
+  const now = Date.now();
+  if (!force && now - lastLearningRefreshAt < LEARNING_REFRESH_MIN_INTERVAL_MS) {
+    return {
+      refreshed: false,
+      reason: "throttled",
+      nextEligibleInMs: LEARNING_REFRESH_MIN_INTERVAL_MS - (now - lastLearningRefreshAt)
+    };
+  }
+
+  lastLearningRefreshAt = now;
+  await refreshPredictionHistory(limit);
+  return {
+    refreshed: true,
+    reason: force ? "forced" : "interval",
+    at: new Date().toISOString()
+  };
+}
+
+function learningAccuracyReport(limit = 300) {
+  const rows = predictionHistory
+    .filter((item) => item.status === "win" || item.status === "loss")
+    .sort(
+      (a, b) =>
+        Date.parse(b.evaluatedAt || b.generatedAt || 0) -
+        Date.parse(a.evaluatedAt || a.generatedAt || 0)
+    )
+    .slice(0, clamp(limit, 20, 2000));
+
+  const wins = rows.filter((item) => item.status === "win").length;
+  const losses = rows.filter((item) => item.status === "loss").length;
+  const accuracy = rows.length ? Number((wins / rows.length).toFixed(4)) : null;
+
+  const byMarket = new Map();
+  for (const item of rows) {
+    const market = String(item.mainMarket || "ND");
+    if (!byMarket.has(market)) {
+      byMarket.set(market, {
+        market,
+        total: 0,
+        wins: 0,
+        losses: 0,
+        avgOdd: 0,
+        _oddSum: 0
+      });
+    }
+    const row = byMarket.get(market);
+    row.total += 1;
+    if (item.status === "win") {
+      row.wins += 1;
+    } else {
+      row.losses += 1;
+    }
+    const odd = Number(item.mainOdd || 0);
+    if (Number.isFinite(odd) && odd > 0) {
+      row._oddSum += odd;
+    }
+  }
+
+  const marketRows = [...byMarket.values()]
+    .map((item) => ({
+      market: item.market,
+      total: item.total,
+      wins: item.wins,
+      losses: item.losses,
+      accuracy: item.total ? Number((item.wins / item.total).toFixed(4)) : null,
+      avgOdd: item.total ? Number((item._oddSum / item.total).toFixed(2)) : null
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  const reliable = marketRows.filter((item) => item.total >= 5);
+  const topMarkets = [...reliable]
+    .sort((a, b) => Number(b.accuracy || 0) - Number(a.accuracy || 0))
+    .slice(0, 6);
+  const weakMarkets = [...reliable]
+    .sort((a, b) => Number(a.accuracy || 0) - Number(b.accuracy || 0))
+    .slice(0, 6);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sampleSize: rows.length,
+    overall: {
+      wins,
+      losses,
+      accuracy
+    },
+    byMarket: marketRows,
+    topMarkets,
+    weakMarkets
+  };
 }
 
 function pushPredictionHistory(system, meta = {}) {
@@ -5102,77 +5196,107 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
     const quotedRows = (publicDataWarehouseState.rows || []).filter((row) => hasRequiredQuoteFields(row));
     if (quotedRows.length) {
       const startDayMs = toStartOfDay(startDate).getTime();
-      const sortedByNearest = [...quotedRows].sort((a, b) => {
+      const futureRows = quotedRows.filter((row) => {
+        const rowTime = new Date(`${String(row.match_date)}T12:00:00Z`).getTime();
+        return Number.isFinite(rowTime) && rowTime >= startDayMs;
+      });
+
+      const sortedByNearest = [...futureRows].sort((a, b) => {
         const da = new Date(`${String(a.match_date)}T12:00:00Z`).getTime() - startDayMs;
         const db = new Date(`${String(b.match_date)}T12:00:00Z`).getTime() - startDayMs;
-        const pa = da >= 0 ? 0 : 1;
-        const pb = db >= 0 ? 0 : 1;
-        if (pa !== pb) {
-          return pa - pb;
-        }
         return Math.abs(da) - Math.abs(db);
       });
 
-      const nearestDate = String(sortedByNearest[0]?.match_date || "").slice(0, 10);
-      const nearestWeekStart = toStartOfDay(new Date(`${nearestDate}T00:00:00Z`));
-      const nearestWeekEnd = new Date(
-        nearestWeekStart.getTime() + timeRangeDays * 24 * 60 * 60 * 1000
-      );
-      const nearestBatch = sortedByNearest
-        .filter((row) => dateInRange(`${row.match_date}T12:00:00Z`, nearestWeekStart, timeRangeDays))
-        .slice(0, Math.max(maxMatches * 4, maxMatches));
-
-      payload.matches = nearestBatch.map((row) => {
-        const marketOutput = buildMarketOutputForMatch(
-          {
-            id: row.match_id,
-            match: `${row.home_team} vs ${row.away_team}`
-          },
-          row
-        );
-        const candidates = marketOutput.marketCandidates;
-        const chosen = chooseSafestMarket(candidates, 0.1);
-        return {
-          id: `near-${randomUUID().slice(0, 8)}`,
-          match: `${row.home_team} vs ${row.away_team}`,
-          pick: chosen.market,
-          backupPick: backupPickFor(chosen.market),
-          odd: chosen.odd,
-          confidence: chosen.confidence,
-          selectionReason: chosen.rationale,
-          safetyScore: chosen.score,
-          externalSignal: null,
-          marketCandidates: candidates,
-          matchday: "Giornata ND",
-          tournament: row.league || "Campionato",
-          country: "ND",
-          kickoff: "12:00",
-          kickoffSlot: slotFromKickoff("12:00"),
-          matchDate: row.match_date,
-          source: "public-warehouse-nearest",
-          raw: `Warehouse nearest ${row.match_id}`,
-          match_id: row.match_id,
-          lambda_home: marketOutput.lambda_home,
-          lambda_away: marketOutput.lambda_away,
-          predictions: marketOutput.predictions,
-          top_predictions: marketOutput.top_predictions,
-          recommended_options: marketOutput.recommended_options,
-          pastStats: {
-            homePpg: Number(row.form_home_5 || 1),
-            awayPpg: Number(row.form_away_5 || 1),
-            homeGF: Number(row.attack_home_5 || 1),
-            awayGF: Number(row.attack_away_5 || 1)
-          }
+      if (!sortedByNearest.length) {
+        payload.fallback = {
+          reason: "no_future_matches_after_start_date",
+          rangeDays: timeRangeDays,
+          startDate: startDateIso
         };
-      });
-      payload.source = "public-web-dataset-nearest";
-      payload.fallback = {
-        reason: "no_matches_in_requested_window",
-        nearestDate,
-        nearestWeekStart: toIsoDate(nearestWeekStart),
-        nearestWeekEnd: toIsoDate(addDays(nearestWeekStart, Math.max(0, timeRangeDays - 1))),
-        rangeDays: timeRangeDays
-      };
+      } else {
+
+        const nearestDate = String(sortedByNearest[0]?.match_date || "").slice(0, 10);
+        const nearestWeekStart = toStartOfDay(new Date(`${nearestDate}T00:00:00Z`));
+        const nearestWeekEnd = new Date(
+          nearestWeekStart.getTime() + timeRangeDays * 24 * 60 * 60 * 1000
+        );
+        const nearestBatch = sortedByNearest
+          .filter((row) => dateInRange(`${row.match_date}T12:00:00Z`, nearestWeekStart, timeRangeDays))
+          .slice(0, Math.max(maxMatches * 4, maxMatches));
+
+        payload.matches = nearestBatch.map((row) => {
+          const marketOutput = buildMarketOutputForMatch(
+            {
+              id: row.match_id,
+              match: `${row.home_team} vs ${row.away_team}`
+            },
+            row
+          );
+          const candidates = marketOutput.marketCandidates;
+          const chosen = chooseSafestMarket(candidates, 0.1);
+          return {
+            id: `near-${randomUUID().slice(0, 8)}`,
+            match: `${row.home_team} vs ${row.away_team}`,
+            pick: chosen.market,
+            backupPick: backupPickFor(chosen.market),
+            odd: chosen.odd,
+            confidence: chosen.confidence,
+            selectionReason: chosen.rationale,
+            safetyScore: chosen.score,
+            externalSignal: null,
+            marketCandidates: candidates,
+            matchday: "Giornata ND",
+            tournament: row.league || "Campionato",
+            country: "ND",
+            kickoff: "12:00",
+            kickoffSlot: slotFromKickoff("12:00"),
+            matchDate: row.match_date,
+            source: "public-warehouse-nearest",
+            raw: `Warehouse nearest ${row.match_id}`,
+            match_id: row.match_id,
+            lambda_home: marketOutput.lambda_home,
+            lambda_away: marketOutput.lambda_away,
+            predictions: marketOutput.predictions,
+            top_predictions: marketOutput.top_predictions,
+            recommended_options: marketOutput.recommended_options,
+            pastStats: {
+              homePpg: Number(row.form_home_5 || 1),
+              awayPpg: Number(row.form_away_5 || 1),
+              homeGF: Number(row.attack_home_5 || 1),
+              awayGF: Number(row.attack_away_5 || 1)
+            }
+          };
+        });
+        payload.source = "public-web-dataset-nearest";
+        payload.fallback = {
+          reason: "no_matches_in_requested_window",
+          nearestDate,
+          nearestWeekStart: toIsoDate(nearestWeekStart),
+          nearestWeekEnd: toIsoDate(addDays(nearestWeekStart, Math.max(0, timeRangeDays - 1))),
+          rangeDays: timeRangeDays
+        };
+      }
+    }
+  }
+
+  if (!payload.matches.length) {
+    try {
+      const sofaFallback = await fetchSofascoreFootball(
+        timeRangeDays,
+        startDate,
+        Math.max(maxMatches * 6, 24)
+      );
+      if (Array.isArray(sofaFallback) && sofaFallback.length) {
+        payload.matches = sofaFallback.slice(0, Math.max(maxMatches * 4, maxMatches));
+        payload.source = "sofascore-live-fallback";
+        payload.fallback = {
+          reason: "public_sources_empty_used_sofascore",
+          rangeDays: timeRangeDays,
+          fetched: payload.matches.length
+        };
+      }
+    } catch {
+      // If live fallback fails, keep best-effort empty payload and let API respond gracefully.
     }
   }
 
@@ -5201,6 +5325,43 @@ function filterMatchesByTeam(matches, teamQuery) {
       home.startsWith(query) ||
       away.startsWith(query)
     );
+  });
+}
+
+function filterMatchesByFocusCountry(matches, focusCountry) {
+  const wanted = normalizeSearchText(focusCountry);
+  if (!wanted || wanted === "all" || wanted === "tutti") {
+    return matches;
+  }
+
+  const italyWanted = wanted === "italia" || wanted === "italy";
+  const europeWanted = wanted === "europa" || wanted === "europe" || wanted === "uefa";
+  const europeCountryRegex =
+    /ital|england|spain|espana|france|germany|deutschland|netherlands|holland|belgium|portugal|scotland|switzerland|austria|greece|turkey|ukraine|poland|czech|croatia|serbia|denmark|sweden|norway|finland|romania|hungary|slovakia|slovenia|bulgaria|ireland|wales|iceland|bosnia|albania|montenegro|kosovo|latvia|lithuania|estonia|luxembourg|cyprus|malta|georgia|armenia|azerbaijan/;
+  const uefaTournamentRegex = /uefa|champions league|europa league|conference league|nations league|european championship/;
+
+  return (matches || []).filter((match) => {
+    const country = normalizeSearchText(match?.country || "");
+    const tournament = normalizeSearchText(match?.tournament || "");
+
+    if (italyWanted) {
+      return (
+        country.includes("ital") ||
+        /serie a|serie b|coppa italia|primavera/.test(tournament)
+      );
+    }
+
+    if (europeWanted) {
+      if (europeCountryRegex.test(country)) {
+        return true;
+      }
+      if (!country || country === "nd" || country === "paese nd") {
+        return uefaTournamentRegex.test(tournament);
+      }
+      return false;
+    }
+
+    return country.includes(wanted) || tournament.includes(wanted);
   });
 }
 
@@ -5950,7 +6111,7 @@ app.get("/api/predictions/history", async (req, res) => {
     const limit = clamp(parseInputNumber(req.query?.limit, 60), 1, 200);
     const shouldRefresh = String(req.query?.refresh || "1") !== "0";
     if (shouldRefresh) {
-      await refreshPredictionHistory(limit);
+      await maybeRefreshLearning(limit, true);
     }
 
     const items = predictionHistory.slice(0, limit);
@@ -5958,12 +6119,34 @@ app.get("/api/predictions/history", async (req, res) => {
       generatedAt: new Date().toISOString(),
       summary: createHistorySummary(items),
       learning: learningSummary(),
+      learningReport: learningAccuracyReport(Math.max(120, limit * 3)),
       externalSignals: externalSignalSummary(5),
       items
     });
   } catch (error) {
     res.status(500).json({
       error: "Impossibile leggere lo storico predizioni.",
+      detail: error instanceof Error ? error.message : "Errore sconosciuto"
+    });
+  }
+});
+
+app.get("/api/ai/learning/report", async (req, res) => {
+  try {
+    const limit = clamp(parseInputNumber(req.query?.limit, 400), 20, 2000);
+    const refresh = String(req.query?.refresh || "1") !== "0";
+    if (refresh) {
+      await maybeRefreshLearning(Math.min(220, limit), true);
+    }
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      learning: learningSummary(),
+      report: learningAccuracyReport(limit)
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Impossibile calcolare report apprendimento AI.",
       detail: error instanceof Error ? error.message : "Errore sconosciuto"
     });
   }
@@ -6233,6 +6416,8 @@ app.get("/api/matches", async (_, res) => {
   try {
     const risk = clamp(parseInputNumber(_.query?.risk, 0.45), 0.05, 0.95);
     const maxMatches = clamp(parseInputNumber(_.query?.maxMatches, 20), 2, 40);
+    const strictWindow = String(_.query?.strictWindow || "0") === "1";
+    const strictCountry = String(_.query?.strictCountry ?? "1") !== "0";
     const focusCountry = String(_.query?.focusCountry || "Italia");
     const teamQuery = String(_.query?.teamQuery || "");
     const dateWindow = resolveDateWindow({
@@ -6242,10 +6427,29 @@ app.get("/api/matches", async (_, res) => {
       fallbackStart: toStartOfDay(new Date())
     });
     const unified = await getUnifiedMatches(dateWindow.timeRangeDays, maxMatches, dateWindow.startDate, {
-      allowNearestFallback: !dateWindow.hasExplicitWindow
+      allowNearestFallback: !strictWindow
     });
-    const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
-    const qualityGate = applyDataQualityGate(teamFiltered, {
+    let teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
+    let countryFiltered = strictCountry
+      ? filterMatchesByFocusCountry(teamFiltered, focusCountry)
+      : teamFiltered;
+
+    // If strict country filter empties the pool, try a wider future fetch to avoid empty UX.
+    if (!countryFiltered.length && strictCountry) {
+      try {
+        const expanded = await fetchSofascoreFootball(
+          Math.max(dateWindow.timeRangeDays, 21),
+          dateWindow.startDate,
+          Math.max(maxMatches * 10, 80)
+        );
+        teamFiltered = filterMatchesByTeam(expanded, teamQuery);
+        countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
+      } catch {
+        // Keep best-effort original pool if live fetch fails.
+      }
+    }
+
+    const qualityGate = applyDataQualityGate(countryFiltered, {
       startDate: unified.startDate,
       timeRangeDays: dateWindow.timeRangeDays
     });
@@ -6260,6 +6464,7 @@ app.get("/api/matches", async (_, res) => {
       sourceUrl,
       sourceType: unified.source,
       focusCountry,
+      strictCountry,
       teamQuery,
       startDate: unified.startDate,
       endDate: dateWindow.endDateIso,
@@ -6328,9 +6533,12 @@ app.get("/api/matches/today", async (_req, res) => {
 
 app.post("/api/predict", async (req, res) => {
   try {
+    await maybeRefreshLearning(120, false).catch(() => null);
     const options = req.body || {};
     const risk = clamp(parseInputNumber(options.risk, 0.45), 0.05, 0.95);
     const maxMatches = clamp(parseInputNumber(options.maxMatches, 8), 2, 20);
+    const strictWindow = String(options.strictWindow || "0") === "1";
+    const strictCountry = String(options.strictCountry ?? "1") !== "0";
     const focusCountry = String(options.focusCountry || "Italia");
     const teamQuery = String(options.teamQuery || "");
     const trackAllPredictions = String(options.trackAllPredictions ?? "1") !== "0";
@@ -6342,14 +6550,32 @@ app.post("/api/predict", async (req, res) => {
       fallbackStart: toStartOfDay(new Date())
     });
     const unified = await getUnifiedMatches(dateWindow.timeRangeDays, maxMatches, dateWindow.startDate, {
-      allowNearestFallback: !dateWindow.hasExplicitWindow
+      allowNearestFallback: !strictWindow
     });
-    const teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
-    const qualityGate = applyDataQualityGate(teamFiltered, {
+    let teamFiltered = filterMatchesByTeam(unified.matches, teamQuery);
+    let countryFiltered = strictCountry
+      ? filterMatchesByFocusCountry(teamFiltered, focusCountry)
+      : teamFiltered;
+
+    if (!countryFiltered.length && strictCountry) {
+      try {
+        const expanded = await fetchSofascoreFootball(
+          Math.max(dateWindow.timeRangeDays, 21),
+          dateWindow.startDate,
+          Math.max(maxMatches * 10, 80)
+        );
+        teamFiltered = filterMatchesByTeam(expanded, teamQuery);
+        countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
+      } catch {
+        // Keep best-effort original pool if live fetch fails.
+      }
+    }
+
+    const qualityGate = applyDataQualityGate(countryFiltered, {
       startDate: unified.startDate,
       timeRangeDays: dateWindow.timeRangeDays
     });
-    const minimallyValid = teamFiltered.filter((item) => {
+    const minimallyValid = countryFiltered.filter((item) => {
       const [homeRaw = "", awayRaw = ""] = String(item.match || "").split(/\s+vs\s+/i);
       return hasRequiredQuoteFields({
         match_date: item.matchDate,
@@ -6436,6 +6662,7 @@ app.post("/api/predict", async (req, res) => {
       sourceUrl,
       sourceType: unified.source,
       focusCountry,
+      strictCountry,
       teamQuery,
       startDate: unified.startDate,
       endDate: dateWindow.endDateIso,

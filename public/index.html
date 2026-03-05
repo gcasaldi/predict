@@ -34,6 +34,13 @@
             <input id="endDate" type="date" />
           </label>
           <label>
+            Area campionati
+            <select id="focusCountry">
+              <option value="Italia" selected>Italia</option>
+              <option value="Europa">Tutta Europa</option>
+            </select>
+          </label>
+          <label>
             Budget totale (€)
             <input id="bankroll" type="number" min="10" step="10" value="100" />
           </label>
@@ -52,6 +59,13 @@
           <button type="button" data-range-days="3">3 giorni</button>
           <button type="button" data-range-days="7">7 giorni</button>
           <button type="button" data-range-days="14">14 giorni</button>
+        </div>
+        <div class="api-config-row">
+          <label>
+            API Backend (Render)
+            <input id="apiBaseUrl" type="url" placeholder="https://tuo-backend.onrender.com" />
+          </label>
+          <button id="saveApiBaseBtn" type="button">Salva API</button>
         </div>
         <div class="search-row">
           <label>
@@ -86,6 +100,7 @@
         <div class="actions">
           <button id="refreshHistoryBtn">Aggiorna storico</button>
         </div>
+        <div id="learningPanel"></div>
         <div id="historySummary"></div>
         <div id="historyList" class="list"></div>
       </section>

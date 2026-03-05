@@ -6,15 +6,19 @@ const ticketsEl = document.querySelector("#tickets");
 const notesEl = document.querySelector("#notes");
 const historySummaryEl = document.querySelector("#historySummary");
 const historyListEl = document.querySelector("#historyList");
+const learningPanelEl = document.querySelector("#learningPanel");
 
 const bankrollEl = document.querySelector("#bankroll");
 const startDateEl = document.querySelector("#startDate");
 const endDateEl = document.querySelector("#endDate");
+const focusCountryEl = document.querySelector("#focusCountry");
 const maxMatchesEl = document.querySelector("#maxMatches");
 const riskEl = document.querySelector("#risk");
 const riskLabelEl = document.querySelector("#riskLabel");
 const teamQueryEl = document.querySelector("#teamQuery");
 const datePresetButtons = document.querySelectorAll(".calendar-presets [data-range-days]");
+const apiBaseUrlEl = document.querySelector("#apiBaseUrl");
+const saveApiBaseBtn = document.querySelector("#saveApiBaseBtn");
 
 const loadMatchesBtn = document.querySelector("#loadMatchesBtn");
 const generateBtn = document.querySelector("#generateBtn");
@@ -22,7 +26,9 @@ const searchTeamBtn = document.querySelector("#searchTeamBtn");
 const refreshHistoryBtn = document.querySelector("#refreshHistoryBtn");
 const trainingMetaEl = document.querySelector("#trainingMeta");
 
-const API_BASE_URL = String(window.PREDICT_CONFIG?.API_BASE_URL || "").trim().replace(/\/$/, "");
+const configuredApiBaseUrl = String(window.PREDICT_CONFIG?.API_BASE_URL || "").trim().replace(/\/$/, "");
+const storedApiBaseUrl = String(window.localStorage?.getItem("predict.apiBaseUrl") || "").trim().replace(/\/$/, "");
+const API_BASE_URL = storedApiBaseUrl || configuredApiBaseUrl;
 const runningOnGithubPages = typeof window !== "undefined" && window.location?.hostname.endsWith("github.io");
 const canUseSameOriginApi = !runningOnGithubPages;
 const hasApiEndpoint = Boolean(API_BASE_URL) || canUseSameOriginApi;
@@ -39,6 +45,14 @@ function apiSetupHint() {
     return `API configurata: ${API_BASE_URL}`;
   }
   return "Configura public/config.js con API_BASE_URL per usare GitHub Pages.";
+}
+
+function normalizeApiBaseInput(value) {
+  return String(value || "").trim().replace(/\/$/, "");
+}
+
+function currentFocusCountry() {
+  return String(focusCountryEl?.value || "Italia").trim() || "Italia";
 }
 
 function euro(value) {
@@ -306,6 +320,44 @@ function renderSystem(payload) {
 function renderPredictionHistory(payload) {
   const summary = payload?.summary || {};
   const items = payload?.items || [];
+  const learning = payload?.learning || {};
+  const learningReport = payload?.learningReport || {};
+
+  if (learningPanelEl) {
+    const overallAcc =
+      typeof learningReport?.overall?.accuracy === "number"
+        ? `${Math.round(learningReport.overall.accuracy * 100)}%`
+        : "n/d";
+    const trackedMarkets = Number(learning?.trackedMarkets || 0);
+    const topMarkets = Array.isArray(learningReport?.topMarkets)
+      ? learningReport.topMarkets.slice(0, 4)
+      : [];
+    const weakMarkets = Array.isArray(learningReport?.weakMarkets)
+      ? learningReport.weakMarkets.slice(0, 4)
+      : [];
+
+    learningPanelEl.innerHTML = `
+      <article class="card strategy-box">
+        <h3>Memoria AI e accuratezza</h3>
+        <div class="summary-grid">
+          <div><span>Campione valutato</span><strong>${learningReport?.sampleSize || 0}</strong></div>
+          <div><span>Accuratezza reale</span><strong>${overallAcc}</strong></div>
+          <div><span>Mercati tracciati</span><strong>${trackedMarkets}</strong></div>
+          <div><span>Aggiornata</span><strong>${learning?.updatedAt ? String(learning.updatedAt).slice(0, 16).replace("T", " ") : "n/d"}</strong></div>
+        </div>
+        ${topMarkets.length
+          ? `<p><strong>Mercati migliori:</strong> ${topMarkets
+              .map((row) => `${row.market} (${Math.round((row.accuracy || 0) * 100)}% su ${row.total})`)
+              .join(" · ")}</p>`
+          : "<p>Mercati migliori: n/d</p>"}
+        ${weakMarkets.length
+          ? `<p><strong>Mercati da migliorare:</strong> ${weakMarkets
+              .map((row) => `${row.market} (${Math.round((row.accuracy || 0) * 100)}% su ${row.total})`)
+              .join(" · ")}</p>`
+          : "<p>Mercati da migliorare: n/d</p>"}
+      </article>
+    `;
+  }
 
   if (historySummaryEl) {
     const accuracyText =
@@ -355,7 +407,7 @@ function renderPredictionHistory(payload) {
     .join("");
 }
 
-async function loadPredictionHistory() {
+async function loadPredictionHistory(forceRefresh = false) {
   if (!hasApiEndpoint) {
     if (historyListEl) {
       historyListEl.innerHTML = `<p class="error">Storico non disponibile in modalità statica. ${apiSetupHint()}</p>`;
@@ -363,12 +415,25 @@ async function loadPredictionHistory() {
     return;
   }
 
+  if (refreshHistoryBtn) {
+    refreshHistoryBtn.disabled = true;
+    refreshHistoryBtn.textContent = forceRefresh ? "Aggiornamento..." : "Caricamento...";
+  }
+
   if (historyListEl) {
-    historyListEl.innerHTML = "<p>Verifica storico in corso...</p>";
+    historyListEl.innerHTML = forceRefresh
+      ? "<p>Verifica storico in corso...</p>"
+      : "<p>Caricamento storico...</p>";
   }
 
   try {
-    const response = await fetch(apiUrl("/api/predictions/history?limit=80&refresh=1"));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), forceRefresh ? 45000 : 12000);
+    const response = await fetch(
+      apiUrl(`/api/predictions/history?limit=80&refresh=${forceRefresh ? "1" : "0"}`),
+      { signal: controller.signal }
+    );
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error("Errore nel recupero dello storico predizioni.");
     }
@@ -376,7 +441,16 @@ async function loadPredictionHistory() {
     renderPredictionHistory(payload);
   } catch (error) {
     if (historyListEl) {
-      historyListEl.innerHTML = `<p class="error">${error.message} ${apiSetupHint()}</p>`;
+      const message =
+        error?.name === "AbortError"
+          ? "Storico troppo lento da recuperare adesso, riprova tra poco."
+          : error.message;
+      historyListEl.innerHTML = `<p class="error">${message} ${apiSetupHint()}</p>`;
+    }
+  } finally {
+    if (refreshHistoryBtn) {
+      refreshHistoryBtn.disabled = false;
+      refreshHistoryBtn.textContent = "Aggiorna storico";
     }
   }
 }
@@ -399,7 +473,7 @@ async function loadMatches() {
       risk: String(currentRiskDecimal()),
       maxMatches: String(parseLocalizedNumber(maxMatchesEl.value, 10)),
       timeRangeDays: String(dateWindow.timeRangeDays),
-      focusCountry: "Italia",
+      focusCountry: currentFocusCountry(),
       startDate: dateWindow.startDate,
       endDate: dateWindow.endDate,
       teamQuery: (teamQueryEl?.value || "").trim()
@@ -466,7 +540,7 @@ async function generateSystem() {
         maxMatches: parseLocalizedNumber(maxMatchesEl.value, 5),
         risk: currentRiskDecimal(),
         timeRangeDays: dateWindow.timeRangeDays,
-        focusCountry: "Italia",
+        focusCountry: currentFocusCountry(),
         startDate: dateWindow.startDate,
         endDate: dateWindow.endDate,
         teamQuery: (teamQueryEl?.value || "").trim()
@@ -488,11 +562,12 @@ async function generateSystem() {
 loadMatchesBtn.addEventListener("click", loadMatches);
 generateBtn.addEventListener("click", generateSystem);
 searchTeamBtn.addEventListener("click", loadMatches);
-refreshHistoryBtn?.addEventListener("click", loadPredictionHistory);
+refreshHistoryBtn?.addEventListener("click", () => loadPredictionHistory(true));
 
 riskEl.addEventListener("input", updateRiskLabel);
 riskEl.addEventListener("change", loadMatches);
 maxMatchesEl.addEventListener("change", loadMatches);
+focusCountryEl?.addEventListener("change", loadMatches);
 
 for (const btn of datePresetButtons) {
   btn.addEventListener("click", () => {
@@ -521,5 +596,20 @@ startDateEl.addEventListener("change", () => {
 updateRiskLabel();
 ensureDateWindowDefaults();
 updatePresetActiveState(normalizeDateWindowFromInputs().timeRangeDays);
+
+if (apiBaseUrlEl) {
+  apiBaseUrlEl.value = API_BASE_URL;
+}
+
+saveApiBaseBtn?.addEventListener("click", () => {
+  const nextValue = normalizeApiBaseInput(apiBaseUrlEl?.value || "");
+  if (nextValue) {
+    window.localStorage.setItem("predict.apiBaseUrl", nextValue);
+  } else {
+    window.localStorage.removeItem("predict.apiBaseUrl");
+  }
+  window.location.reload();
+});
+
 loadMatches();
-loadPredictionHistory();
+loadPredictionHistory(false);
