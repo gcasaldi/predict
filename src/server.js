@@ -5028,6 +5028,165 @@ async function fetchSofascoreFootball(
   return picks;
 }
 
+function fbrefCompetitionCountry(competitionName = "") {
+  const token = normalizeSearchText(competitionName);
+  if (!token) {
+    return "Europe";
+  }
+  if (/serie a|serie b|coppa italia|supercoppa|primavera/.test(token)) {
+    return "Italy";
+  }
+  if (/premier league|fa cup|efl cup|championship/.test(token)) {
+    return "England";
+  }
+  if (/la liga|copa del rey/.test(token)) {
+    return "Spain";
+  }
+  if (/bundesliga|dfb-pokal/.test(token)) {
+    return "Germany";
+  }
+  if (/ligue 1|coupe de france/.test(token)) {
+    return "France";
+  }
+  if (/champions league|europa league|conference league|uefa/.test(token)) {
+    return "Europe";
+  }
+  return "Europe";
+}
+
+function parseFbrefMatchDate(rawDate, fallbackYear = new Date().getFullYear()) {
+  const text = normalizeWhitespace(String(rawDate || ""));
+  if (!text) {
+    return null;
+  }
+
+  const isoHit = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (isoHit?.[1]) {
+    const parsedIso = parseIsoDateInput(isoHit[1], new Date(fallbackYear, 0, 1));
+    return Number.isNaN(parsedIso.getTime()) ? null : parsedIso;
+  }
+
+  const direct = new Date(`${text} UTC`);
+  if (!Number.isNaN(direct.getTime())) {
+    return toStartOfDay(direct);
+  }
+
+  const numeric = parseDateFromText(text, new Date(fallbackYear, 0, 1));
+  if (numeric) {
+    return toStartOfDay(numeric);
+  }
+
+  return null;
+}
+
+async function fetchFbrefUpcomingMatches(days = 14, referenceDate = new Date(), maxEvents = 120) {
+  const payload = await fetchText("https://fbref.com/en/matches/");
+  if (!payload.ok) {
+    return [];
+  }
+
+  const $ = cheerio.load(payload.text);
+  const today = toStartOfDay(referenceDate);
+  const startMs = today.getTime();
+  const endExclusiveMs = startMs + Math.max(1, Number(days || 14)) * 24 * 60 * 60 * 1000;
+  const fallbackForm = normalizeTeamForm(null);
+  const picked = [];
+  const dedupe = new Set();
+
+  $("table tbody tr").each((_, element) => {
+    const row = $(element);
+    if (row.hasClass("thead")) {
+      return;
+    }
+
+    const homeTeam = normalizeWhitespace(
+      row.find("td[data-stat='home_team'] a").first().text() ||
+      row.find("td[data-stat='home_team']").first().text()
+    );
+    const awayTeam = normalizeWhitespace(
+      row.find("td[data-stat='away_team'] a").first().text() ||
+      row.find("td[data-stat='away_team']").first().text()
+    );
+    const competition = normalizeWhitespace(
+      row.find("td[data-stat='comp'] a").first().text() ||
+      row.find("td[data-stat='comp']").first().text()
+    ) || "FBref";
+    const dateText = normalizeWhitespace(
+      row.find("td[data-stat='date']").first().text() ||
+      row.find("th[data-stat='date']").first().text()
+    );
+    const kickoffRaw = normalizeWhitespace(row.find("td[data-stat='start_time']").first().text());
+    const kickoff = /^\d{1,2}[:.]\d{2}$/.test(kickoffRaw)
+      ? kickoffRaw.replace(".", ":").padStart(5, "0")
+      : null;
+
+    if (!homeTeam || !awayTeam || !dateText) {
+      return;
+    }
+
+    const parsedDate = parseFbrefMatchDate(dateText, today.getFullYear());
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+      return;
+    }
+
+    const eventMs = parsedDate.getTime();
+    if (eventMs < startMs || eventMs >= endExclusiveMs) {
+      return;
+    }
+
+    const dateIso = toIsoDate(parsedDate);
+    const dedupeKey = `${dateIso}|${normalizeTeamKey(homeTeam)}|${normalizeTeamKey(awayTeam)}`;
+    if (dedupe.has(dedupeKey)) {
+      return;
+    }
+    dedupe.add(dedupeKey);
+
+    const marketCandidates = diversifyMarketCandidates(
+      buildMarketCandidates(fallbackForm, fallbackForm),
+      12
+    );
+    const predicted = chooseSafestMarket(marketCandidates, 0.38);
+
+    picked.push({
+      id: `fbref-${randomUUID().slice(0, 8)}`,
+      match: `${homeTeam} vs ${awayTeam}`,
+      pick: predicted.market,
+      backupPick: backupPickFor(predicted.market),
+      odd: predicted.odd,
+      confidence: predicted.confidence,
+      selectionReason: `FBref matches (${competition})`,
+      safetyScore: predicted.score,
+      externalSignal: null,
+      marketCandidates,
+      matchday: "Giornata ND",
+      tournament: competition,
+      country: fbrefCompetitionCountry(competition),
+      kickoff,
+      kickoffSlot: slotFromKickoff(kickoff),
+      matchDate: dateIso,
+      source: "fbref-matches",
+      raw: "FBref /en/matches",
+      pastStats: {
+        homePpg: 1,
+        awayPpg: 1,
+        homeGF: 1,
+        awayGF: 1
+      }
+    });
+  });
+
+  return picked
+    .sort((a, b) => {
+      const da = String(a.matchDate || "");
+      const db = String(b.matchDate || "");
+      if (da !== db) {
+        return da.localeCompare(db);
+      }
+      return String(a.kickoff || "99:99").localeCompare(String(b.kickoff || "99:99"));
+    })
+    .slice(0, Math.max(20, maxEvents));
+}
+
 async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate = new Date(), options = {}) {
   const allowNearestFallback = options?.allowNearestFallback === true;
   const startDateIso = toIsoDate(toStartOfDay(startDate));
@@ -5281,6 +5440,27 @@ async function getUnifiedMatches(timeRangeDays = 7, maxMatches = 10, startDate =
 
   if (!payload.matches.length) {
     try {
+      const fbrefFallback = await fetchFbrefUpcomingMatches(
+        timeRangeDays,
+        startDate,
+        Math.max(maxMatches * 8, 80)
+      );
+      if (Array.isArray(fbrefFallback) && fbrefFallback.length) {
+        payload.matches = fbrefFallback.slice(0, Math.max(maxMatches * 4, maxMatches));
+        payload.source = "fbref-live-fallback";
+        payload.fallback = {
+          reason: "public_sources_empty_used_fbref",
+          rangeDays: timeRangeDays,
+          fetched: payload.matches.length
+        };
+      }
+    } catch {
+      // Keep best-effort flow and try next fallback.
+    }
+  }
+
+  if (!payload.matches.length) {
+    try {
       const sofaFallback = await fetchSofascoreFootball(
         timeRangeDays,
         startDate,
@@ -5335,7 +5515,10 @@ function filterMatchesByFocusCountry(matches, focusCountry) {
   }
 
   const italyWanted = wanted === "italia" || wanted === "italy";
+  const serieAWanted = wanted === "serie a" || wanted === "seriea";
   const europeWanted = wanted === "europa" || wanted === "europe" || wanted === "uefa";
+  const italyTournamentRegex =
+    /(^|[^a-z0-9])(serie a|serie b|coppa italia|campionato primavera|primavera)([^a-z0-9]|$)/;
   const europeCountryRegex =
     /ital|england|spain|espana|france|germany|deutschland|netherlands|holland|belgium|portugal|scotland|switzerland|austria|greece|turkey|ukraine|poland|czech|croatia|serbia|denmark|sweden|norway|finland|romania|hungary|slovakia|slovenia|bulgaria|ireland|wales|iceland|bosnia|albania|montenegro|kosovo|latvia|lithuania|estonia|luxembourg|cyprus|malta|georgia|armenia|azerbaijan/;
   const uefaTournamentRegex = /uefa|champions league|europa league|conference league|nations league|european championship/;
@@ -5344,10 +5527,21 @@ function filterMatchesByFocusCountry(matches, focusCountry) {
     const country = normalizeSearchText(match?.country || "");
     const tournament = normalizeSearchText(match?.tournament || "");
 
+    if (serieAWanted) {
+      const isItalianCountry = country.includes("ital");
+      const isSerieAName = /(^|[^a-z0-9])serie\s*a([^a-z0-9]|$)/.test(tournament);
+      const isKnownFalsePositive = /ligapro\s+serie\s+a/.test(tournament) && !isItalianCountry;
+      return isSerieAName && isItalianCountry && !isKnownFalsePositive;
+    }
+
     if (italyWanted) {
+      // Keep Italian competitions and avoid false positives like "LigaPro Serie A".
+      if (/ligapro\s+serie\s+a/.test(tournament) && !country.includes("ital")) {
+        return false;
+      }
       return (
         country.includes("ital") ||
-        /serie a|serie b|coppa italia|primavera/.test(tournament)
+        italyTournamentRegex.test(tournament)
       );
     }
 
@@ -6433,6 +6627,7 @@ app.get("/api/matches", async (_, res) => {
     let countryFiltered = strictCountry
       ? filterMatchesByFocusCountry(teamFiltered, focusCountry)
       : teamFiltered;
+    let countryFallback = null;
 
     // If strict country filter empties the pool, try a wider future fetch to avoid empty UX.
     if (!countryFiltered.length && strictCountry) {
@@ -6446,6 +6641,40 @@ app.get("/api/matches", async (_, res) => {
         countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
       } catch {
         // Keep best-effort original pool if live fetch fails.
+      }
+    }
+
+    if (!countryFiltered.length && strictCountry) {
+      const focusToken = normalizeSearchText(focusCountry);
+      const needsExtendedFallback =
+        focusToken === "serie a" ||
+        focusToken === "seriea" ||
+        focusToken === "italia" ||
+        focusToken === "italy";
+
+      if (needsExtendedFallback) {
+        try {
+          const fallbackStart = toStartOfDay(new Date());
+          const expandedFromToday = await fetchFbrefUpcomingMatches(
+            Math.max(dateWindow.timeRangeDays, 120),
+            fallbackStart,
+            Math.max(maxMatches * 20, 220)
+          );
+          teamFiltered = filterMatchesByTeam(expandedFromToday, teamQuery);
+          countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
+
+          if (countryFiltered.length) {
+            countryFallback = {
+              reason: "country_filter_empty_used_extended_fbref",
+              fromDate: toIsoDate(fallbackStart),
+              rangeDays: Math.max(dateWindow.timeRangeDays, 120),
+              focusCountry,
+              fetched: countryFiltered.length
+            };
+          }
+        } catch {
+          // Keep best-effort original pool if live fallback fails.
+        }
       }
     }
 
@@ -6473,7 +6702,7 @@ app.get("/api/matches", async (_, res) => {
         end: dateWindow.endDateIso,
         rangeDays: dateWindow.timeRangeDays
       },
-      fallback: unified.fallback || null,
+      fallback: countryFallback || unified.fallback || null,
       risk,
       count: riskAware.length,
       qualityAudit: {
@@ -6556,6 +6785,7 @@ app.post("/api/predict", async (req, res) => {
     let countryFiltered = strictCountry
       ? filterMatchesByFocusCountry(teamFiltered, focusCountry)
       : teamFiltered;
+    let countryFallback = null;
 
     if (!countryFiltered.length && strictCountry) {
       try {
@@ -6568,6 +6798,40 @@ app.post("/api/predict", async (req, res) => {
         countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
       } catch {
         // Keep best-effort original pool if live fetch fails.
+      }
+    }
+
+    if (!countryFiltered.length && strictCountry) {
+      const focusToken = normalizeSearchText(focusCountry);
+      const needsExtendedFallback =
+        focusToken === "serie a" ||
+        focusToken === "seriea" ||
+        focusToken === "italia" ||
+        focusToken === "italy";
+
+      if (needsExtendedFallback) {
+        try {
+          const fallbackStart = toStartOfDay(new Date());
+          const expandedFromToday = await fetchFbrefUpcomingMatches(
+            Math.max(dateWindow.timeRangeDays, 120),
+            fallbackStart,
+            Math.max(maxMatches * 20, 220)
+          );
+          teamFiltered = filterMatchesByTeam(expandedFromToday, teamQuery);
+          countryFiltered = filterMatchesByFocusCountry(teamFiltered, focusCountry);
+
+          if (countryFiltered.length) {
+            countryFallback = {
+              reason: "country_filter_empty_used_extended_fbref",
+              fromDate: toIsoDate(fallbackStart),
+              rangeDays: Math.max(dateWindow.timeRangeDays, 120),
+              focusCountry,
+              fetched: countryFiltered.length
+            };
+          }
+        } catch {
+          // Keep best-effort original pool if live fallback fails.
+        }
       }
     }
 
@@ -6671,7 +6935,7 @@ app.post("/api/predict", async (req, res) => {
         end: dateWindow.endDateIso,
         rangeDays: dateWindow.timeRangeDays
       },
-      fallback: unified.fallback || null,
+      fallback: countryFallback || unified.fallback || null,
       timeRangeDays: dateWindow.timeRangeDays,
       aiTraining: aiTrainingState,
       marketUniverse: getMarketUniverseSummary(),
